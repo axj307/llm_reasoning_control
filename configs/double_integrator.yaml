@@ -1,0 +1,44 @@
+# Double Integrator Environment Configuration
+# System: ẍ = u (double integrator dynamics)
+
+environment:
+  name: "double_integrator"
+  description: "Double integrator system with position and velocity states"
+  
+  # System dynamics: ẍ = u
+  # State: [position, velocity]
+  # Control: acceleration (u)
+  
+  # State bounds: [position_bounds, velocity_bounds]
+  state_bounds:
+    - [-1.0, 1.0]  # Position bounds
+    - [-1.0, 1.0]  # Velocity bounds
+  
+  # Control bounds
+  control_bounds: [-3.0, 3.0]  # Acceleration bounds
+  
+  # Initial condition sampling bounds
+  initial_bounds:
+    - [-0.8, 0.8]  # Initial position
+    - [-0.8, 0.8]  # Initial velocity
+  
+  # LQR controller weights
+  lqr_weights:
+    Q: [10.0, 10.0]  # State weights [position, velocity]
+    R: 0.1           # Control weight
+
+# Environment-specific training overrides
+training:
+  # Can override base training settings for this environment
+  sft:
+    # Override learning rate for double integrator if needed
+    # learning_rate: 0.0001
+  grpo:
+    # Override GRPO settings if needed
+    # max_steps: 150
+
+# Environment-specific data generation
+data:
+  # Override default samples for this environment
+  samples_per_training: 300
+  # Can add environment-specific data generation parameters

@@ -1,0 +1,58 @@
+# Base configuration for all environments
+# This file contains shared settings across all control systems
+
+# Model Configuration
+model:
+  base_model_name: "unsloth/Qwen3-4B-Base"
+  max_seq_length: 1024  # Can increase for longer reasoning traces
+  lora_rank: 8  # Larger rank = smarter, but slower
+  load_in_4bit: true
+  fast_inference: true  # Enable vLLM fast inference
+  gpu_memory_utilization: 0.3  # Reduce if out of memory
+  auto_select_gpu: true  # Automatically select best GPU
+
+# System Configuration
+system:
+  dt: 0.1  # Time step
+  steps: 50  # Number of control steps
+  reasoning_start: "<REASONING>"
+  reasoning_end: "</REASONING>"
+  solution_start: "<CONTROLS>"
+  solution_end: "</CONTROLS>"
+
+# Data Generation Configuration
+data:
+  default_samples_per_system: 200
+  train_eval_split: 0.9
+  random_seed: 42
+  save_datasets: true
+  dataset_directory: "data/saved_datasets"
+
+# Evaluation Configuration
+eval:
+  sampling_params:
+    temperature: 0.7
+    top_k: 50
+    max_tokens: 1024
+  num_test_cases: 10
+  mpc_horizon: 10
+  metrics_to_compute:
+    - "final_error"
+    - "lqr_cost"
+    - "total_control_effort"
+    - "mean_control_change"
+    - "constraints_satisfied"
+  plot_config:
+    figsize: [12, 10]
+    dpi: 300
+    save_plots: true
+    plot_directory: "plots"
+
+# Path Configuration
+paths:
+  models_dir: "models"
+  data_dir: "data"
+  plots_dir: "plots"
+  logs_dir: "logs"
+  checkpoints_dir: "checkpoints"
+  notebooks_dir: "notebooks"
