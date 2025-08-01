@@ -44,10 +44,35 @@ trainer/
 └── [existing files]   # All still working
 ```
 
-## Next Steps (Phase 2):
-- Separate SFT and GRPO training strategies
-- Create modular reward implementations
-- Implement factory pattern for trainers
+## Phase 2: Separated Training Strategies ✅ COMPLETED
+
+### What We've Done:
+1. **Created modular trainer implementations**:
+   - `trainers/base_trainer_impl.py` - Common functionality
+   - `trainers/sft_trainer.py` - SFT-specific implementation
+   - `trainers/grpo_trainer.py` - GRPO-specific implementation
+
+2. **Implemented trainer factory pattern**:
+   - `trainers/trainer_factory.py` - Dynamic trainer creation
+   - Easy registration of new training strategies
+   - Clean instantiation API
+
+3. **Created enhanced ControlTrainer**:
+   - `trainer_module_v2.py` - Uses modular trainers
+   - Backward compatible with toggle flag
+   - Cleaner configuration management
+
+### Benefits:
+- ✅ Each training strategy is independent
+- ✅ Easy to add new training methods
+- ✅ Cleaner separation of concerns
+- ✅ Better testability and maintainability
+- ✅ Full backward compatibility maintained
+
+### Next Steps (Phase 3):
+- Create dataset abstraction layer
+- Implement data loaders for different formats
+- Add data augmentation capabilities
 
 ## Usage Examples:
 
