@@ -3,7 +3,7 @@ Supervised Fine-Tuning (SFT) trainer implementation.
 """
 
 from typing import Any, Dict, Optional
-from datasets import Dataset
+import datasets as hf_datasets
 from trl import SFTTrainer as TRLSFTTrainer, SFTConfig
 import sys
 import os
@@ -46,7 +46,7 @@ class SFTTrainerModule(BaseTrainerImpl):
             output_dir=self.config.get('output_dir', 'outputs/sft'),
         )
         
-    def train(self, dataset: Dataset, **kwargs) -> Dict[str, Any]:
+    def train(self, dataset: hf_datasets.Dataset, **kwargs) -> Dict[str, Any]:
         """
         Train the model using SFT.
         
@@ -91,7 +91,7 @@ class SFTTrainerModule(BaseTrainerImpl):
         
         return metrics
         
-    def validate(self, dataset: Dataset) -> Dict[str, Any]:
+    def validate(self, dataset: hf_datasets.Dataset) -> Dict[str, Any]:
         """Validate the model."""
         if self.trainer is None:
             logger.warning("No trainer available for validation")

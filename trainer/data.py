@@ -3,9 +3,16 @@ Data generation and preprocessing module.
 """
 
 import numpy as np
-from datasets import Dataset
 from control import solve_double_integrator
 from config import *
+from logger import logger
+
+# Import HuggingFace datasets
+import datasets as hf_datasets
+
+# Import our custom datasets module
+from datasets import dataset_manager
+from datasets.systems import DoubleIntegratorDataset
 
 
 def get_system_prompt(dt=DT, steps=STEPS):
@@ -19,67 +26,32 @@ Explain your approach between {REASONING_START} and {REASONING_END}.
 Then provide exactly {steps} control values as a comma-separated list between {SOLUTION_START} and {SOLUTION_END}."""
 
 
-def generate_control_dataset(num_samples=NUM_SAMPLES, dt=DT, steps=STEPS):
-    """Generate double integrator control problems with LQR solutions."""
-    data = []
-    total_time = dt * steps
-    system_prompt = get_system_prompt(dt, steps)
+def generate_control_dataset(num_samples=NUM_SAMPLES, dt=DT, steps=STEPS, use_cache=True):
+    """
+    Generate or load double integrator control problems with LQR solutions.
     
-    for i in range(num_samples):
-        # Random initial states
-        x0 = np.random.uniform(-0.8, 0.8)
-        v0 = np.random.uniform(-0.8, 0.8)
+    Args:
+        num_samples: Number of samples to generate
+        dt: Time step
+        steps: Number of control steps
+        use_cache: Whether to use cached dataset if available
         
-        # Problem statement
-        problem = f"Control a double integrator system with initial state [position={x0:.2f}, velocity={v0:.2f}] to reach the origin (0,0) in {total_time:.2f} seconds using {steps} steps. Ensure all states remain within [-1,1] and controls within [-3,3]."
-        
-        # Solve for optimal control
-        control_inputs = solve_double_integrator(x0, v0, dt, steps)
-        
-        # Generate reasoning text
-        reasoning = f"""For the double integrator system starting at position {x0:.2f} and velocity {v0:.2f}, I'll apply Linear Quadratic Regulator (LQR) control to reach the origin optimally in {total_time:.2f} seconds using {steps} steps.
-
-        The LQR approach provides an optimal feedback control law by minimizing a quadratic cost function that balances:
-        1. The error in state (position and velocity)
-        2. The control effort used
-
-        For a double integrator with dynamics:
-        - ẋ = v
-        - v̇ = u
-
-        The discrete-time state-space representation is:
-        - x(k+1) = Ax(k) + Bu(k)
-
-        Where:
-        - A = [[1, Δt], [0, 1]]
-        - B = [[0.5(Δt)², Δt]]
-        - Δt = {dt:.2f} seconds
-
-        Computing the optimal gain matrix K through the Riccati equation gives a feedback law u = -Kx.
-        This produces a smooth control sequence that brings the system to the origin while respecting constraints.
-
-        The resulting {steps} control inputs applied over {total_time:.2f} seconds will optimally control the system to the target state."""
-        
-        # Format control values
-        control_str = ", ".join([f"{u:.3f}" for u in control_inputs])
-        
-        # Create output
-        complete_output = f"{REASONING_START}{reasoning}{REASONING_END}{SOLUTION_START}{control_str}{SOLUTION_END}"
-        
-        # Add to dataset
-        data.append({
-            "prompt": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": problem}
-            ],
-            "answer": control_str,
-            "Messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": problem},
-                {"role": "assistant", "content": complete_output}
-            ]
-        })
+    Returns:
+        List of dataset samples
+    """
+    # Register dataset class if not already registered
+    dataset_manager.register_dataset_class("double_integrator", DoubleIntegratorDataset)
     
+    # Get or create dataset
+    data = dataset_manager.get_or_create(
+        system="double_integrator",
+        num_samples=num_samples,
+        dt=dt,
+        steps=steps,
+        force_regenerate=not use_cache
+    )
+    
+    logger.info(f"Dataset ready with {len(data)} samples")
     return data
 
 
@@ -107,7 +79,7 @@ def format_dataset_for_sft(dataset, tokenizer):
     return dataset.map(format_example)
 
 
-def create_dataset(num_samples=NUM_SAMPLES):
+def create_dataset(num_samples=NUM_SAMPLES, use_cache=True):
     """Create and return a HuggingFace dataset."""
-    data = generate_control_dataset(num_samples)
-    return Dataset.from_list(data)
+    data = generate_control_dataset(num_samples, use_cache=use_cache)
+    return hf_datasets.Dataset.from_list(data)

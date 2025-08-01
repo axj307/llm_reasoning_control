@@ -3,7 +3,7 @@ Group Relative Policy Optimization (GRPO) trainer implementation.
 """
 
 from typing import Any, Dict, List, Callable, Optional
-from datasets import Dataset
+import datasets as hf_datasets
 from trl import GRPOTrainer as TRLGRPOTrainer, GRPOConfig
 from vllm import SamplingParams
 import sys
@@ -89,7 +89,7 @@ class GRPOTrainerModule(BaseTrainerImpl):
         self.reward_functions = reward_functions
         logger.info(f"Set {len(reward_functions)} custom reward functions")
         
-    def train(self, dataset: Dataset, **kwargs) -> Dict[str, Any]:
+    def train(self, dataset: hf_datasets.Dataset, **kwargs) -> Dict[str, Any]:
         """
         Train the model using GRPO.
         

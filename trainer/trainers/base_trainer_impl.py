@@ -5,7 +5,7 @@ Base trainer implementation with common functionality.
 import torch
 import gc
 from typing import Any, Dict, Optional
-from datasets import Dataset
+import datasets as hf_datasets
 import sys
 import os
 
@@ -97,7 +97,7 @@ class BaseTrainerImpl(BaseTrainer):
         else:
             raise ValueError(f"Unknown optimizer: {optimizer_name}")
             
-    def _prepare_dataset(self, dataset: Dataset) -> Dataset:
+    def _prepare_dataset(self, dataset: hf_datasets.Dataset) -> hf_datasets.Dataset:
         """Prepare dataset for training."""
         # Override in subclasses for specific preparation
         return dataset
