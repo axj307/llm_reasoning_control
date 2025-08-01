@@ -11,8 +11,8 @@ from logger import logger
 import datasets as hf_datasets
 
 # Import our custom datasets module
-from datasets import dataset_manager
-from datasets.systems import DoubleIntegratorDataset
+from control_datasets import dataset_manager
+from control_datasets.systems import DoubleIntegratorDataset
 
 
 def get_system_prompt(dt=DT, steps=STEPS):

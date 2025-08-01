@@ -11,8 +11,8 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from datasets import dataset_manager
-from datasets.systems import DoubleIntegratorDataset
+from control_datasets import dataset_manager
+from control_datasets.systems import DoubleIntegratorDataset
 from logger import logger
 
 

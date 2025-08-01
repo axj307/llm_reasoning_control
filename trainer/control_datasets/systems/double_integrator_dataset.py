@@ -13,7 +13,7 @@ if trainer_path not in sys.path:
     sys.path.insert(0, trainer_path)
 
 # Use absolute imports to avoid conflicts
-from datasets.base_dataset import BaseControlDataset
+from control_datasets.base_dataset import BaseControlDataset
 
 # Import other modules directly
 import sys

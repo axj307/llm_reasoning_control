@@ -3,9 +3,11 @@ Abstract base class for all training strategies.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 import torch
-import datasets as hf_datasets
+
+if TYPE_CHECKING:
+    from datasets import Dataset
 
 
 class BaseTrainer(ABC):
@@ -31,7 +33,7 @@ class BaseTrainer(ABC):
         pass
         
     @abstractmethod
-    def train(self, dataset: hf_datasets.Dataset, **kwargs) -> Dict[str, Any]:
+    def train(self, dataset: 'Dataset', **kwargs) -> Dict[str, Any]:
         """
         Train the model.
         
@@ -49,7 +51,7 @@ class BaseTrainer(ABC):
         """Save training checkpoint."""
         pass
         
-    def validate(self, dataset: hf_datasets.Dataset) -> Dict[str, Any]:
+    def validate(self, dataset: 'Dataset') -> Dict[str, Any]:
         """
         Validate the model. Default implementation can be overridden.
         
