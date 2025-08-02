@@ -16,14 +16,27 @@ sys.path.insert(0, parent_dir)
 sys.path.insert(0, current_dir)
 
 # Import modules directly
-import config as cfg
 from control import solve_double_integrator
 from data import create_dataset, get_system_prompt
 from trainer_module import ControlTrainer
 from utils import visualize_solution, parse_control_output
 
-# Import config variables
-from config import *
+# Import from the original config.py file
+import importlib.util
+spec = importlib.util.spec_from_file_location("old_config", os.path.join(os.path.dirname(__file__), "config.py"))
+cfg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cfg)
+
+# Import all constants we need
+MODEL_NAME = cfg.MODEL_NAME
+LORA_RANK = cfg.LORA_RANK
+NUM_SAMPLES = cfg.NUM_SAMPLES
+DT = cfg.DT
+STEPS = cfg.STEPS
+SFT_EPOCHS = cfg.SFT_EPOCHS
+GRPO_MAX_STEPS = cfg.GRPO_MAX_STEPS
+MODEL_SAVE_NAME = cfg.MODEL_SAVE_NAME
+OUTPUT_DIR = cfg.OUTPUT_DIR
 
 
 def main():

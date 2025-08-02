@@ -1,0 +1,114 @@
+# Base configuration file with all default settings
+# Other configs can inherit from this file
+
+# Model configuration
+model:
+  name: ${MODEL_NAME:unsloth/Qwen3-4B-Base}
+  max_seq_length: 2048
+  dtype: null  # auto
+  load_in_4bit: true
+  use_gradient_checkpointing: "unsloth"
+  random_state: 3407
+  use_rslora: false
+  loftq_config: null
+
+# LoRA configuration
+lora:
+  rank: 32
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  lora_alpha: 16
+  lora_dropout: 0
+  bias: "none"
+  use_gradient_checkpointing: false
+  use_rslora: false
+  use_dora: false
+  loftq_config: null
+
+# Training configuration
+training:
+  seed: 3407
+  output_dir: outputs
+  logging_steps: 1
+  save_strategy: "steps"
+  save_steps: 100
+  evaluation_strategy: "no"
+  per_device_train_batch_size: 4
+  gradient_accumulation_steps: 4
+  warmup_steps: 5
+  weight_decay: 0.01
+  lr_scheduler_type: "linear"
+  optim: "adamw_8bit"
+  fp16: true
+  bf16: false
+  gradient_checkpointing: true
+  group_by_length: true
+  dataloader_num_workers: 0
+  remove_unused_columns: false
+  hub_model_id: null
+  hub_strategy: "every_save"
+  hub_token: null
+  hub_private_repo: false
+  push_to_hub: false
+
+# Control system configuration
+control:
+  dt: 0.1
+  steps: 50
+  control_bounds: [-3.0, 3.0]
+  state_bounds: [-1.0, 1.0]
+
+# Dataset configuration
+dataset:
+  num_samples: 500
+  train_split: 0.9
+  val_split: 0.1
+  cache_dir: "./cache"
+  num_proc: 4
+
+# Formatting tokens
+formatting:
+  reasoning_start: "<REASONING>"
+  reasoning_end: "</REASONING>"
+  solution_start: "<CONTROLS>"
+  solution_end: "</CONTROLS>"
+  system_prompt_template: |
+    You are an expert in control theory. Given a control system and initial conditions, provide a control sequence.
+    
+    System: {system_name}
+    Time step: {dt}
+    Number of steps: {steps}
+    
+    Provide the control sequence that brings the system to the target state.
+
+# GPU configuration
+gpu:
+  memory_utilization: 0.7
+  device_map: "auto"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  wandb_project: "llm-control"
+  wandb_enabled: false
+  log_to_file: true
+  log_file: "training.log"
+
+# Evaluation configuration
+evaluation:
+  num_test_cases: 10
+  test_initial_conditions:
+    - [0.5, -0.3]
+    - [0.7, 0.2]
+    - [-0.6, -0.4]
+    - [0.3, 0.6]
+    - [-0.4, 0.5]
+  visualize: true
+  save_plots: true
+  plot_dir: "plots"

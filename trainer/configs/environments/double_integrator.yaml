@@ -1,0 +1,74 @@
+# Double Integrator specific configuration
+# Inherits from base configuration
+
+defaults:
+  - /base/base
+
+# System identification
+system:
+  name: "double_integrator"
+  description: "Double integrator control system (ẍ = u)"
+  state_dim: 2
+  action_dim: 1
+
+# Control parameters specific to double integrator
+control:
+  dt: 0.1
+  steps: 50
+  control_bounds: [-3.0, 3.0]
+  state_bounds: 
+    position: [-1.0, 1.0]
+    velocity: [-1.0, 1.0]
+  target_state: [0.0, 0.0]
+
+# LQR parameters for optimal control baseline
+lqr:
+  Q: [[10.0, 0.0], [0.0, 1.0]]  # State cost matrix
+  R: [[0.1]]                    # Control cost matrix
+
+# Dataset generation parameters
+dataset:
+  num_samples: 500
+  initial_state_sampling: "uniform"
+  initial_state_ranges:
+    position: [-0.8, 0.8]
+    velocity: [-0.8, 0.8]
+  noise_level: 0.0  # No noise for deterministic system
+
+# Training adjustments for double integrator
+training:
+  per_device_train_batch_size: 4
+  learning_rate: 2e-4
+  
+# Evaluation specific to double integrator
+evaluation:
+  metrics:
+    - "final_state_error"
+    - "trajectory_smoothness"
+    - "control_effort"
+    - "time_to_convergence"
+  test_initial_conditions:
+    - [0.5, -0.3]
+    - [0.7, 0.2]
+    - [-0.6, -0.4]
+    - [0.3, 0.6]
+    - [-0.4, 0.5]
+    - [0.8, 0.0]
+    - [0.0, 0.8]
+    - [-0.8, -0.8]
+    - [0.9, -0.9]
+    - [-0.5, 0.7]
+
+# System prompt template specific to double integrator
+formatting:
+  system_prompt_template: |
+    You are an expert in control theory. Your task is to find a control sequence for a double integrator system.
+    
+    System dynamics: ẍ = u
+    State: [position, velocity]
+    Control bounds: u ∈ [{control_bounds[0]}, {control_bounds[1]}]
+    Time step: {dt} seconds
+    Number of steps: {steps}
+    Target state: [0, 0]
+    
+    Given the initial state, provide a control sequence that brings the system to the target.

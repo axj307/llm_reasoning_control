@@ -1,0 +1,45 @@
+# Configuration preset for small GPUs (8GB or less)
+# Memory-optimized settings
+
+defaults:
+  - /base/base
+
+# Memory-efficient model settings
+model:
+  max_seq_length: 2048  # Standard sequence length
+  load_in_4bit: true
+  use_gradient_checkpointing: "unsloth"
+
+# Smaller LoRA configuration
+lora:
+  rank: 16  # Lower rank
+  lora_alpha: 16
+
+# Reduced batch sizes and gradient accumulation
+training:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 16  # Effective batch size of 16
+  gradient_checkpointing: true
+  fp16: true
+  bf16: false
+  optim: "paged_adamw_8bit"  # Memory efficient optimizer
+  
+# GPU memory settings
+gpu:
+  memory_utilization: 0.5  # Conservative memory usage
+  device_map: "auto"
+
+# Dataset optimizations
+dataset:
+  num_proc: 1  # Single process to save memory
+  cache_dir: null  # Don't cache to save disk space
+
+# Reduced evaluation to save memory
+evaluation:
+  num_test_cases: 5
+  visualize: false  # Skip visualization during training
+  
+# Conservative generation settings for GRPO
+grpo:
+  num_generations: 2  # Fewer generations
+  max_new_tokens: 256  # Shorter outputs

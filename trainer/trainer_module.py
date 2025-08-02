@@ -7,7 +7,30 @@ import gc
 from unsloth import FastLanguageModel
 from trl import SFTTrainer, SFTConfig, GRPOTrainer, GRPOConfig
 from vllm import SamplingParams
-from config import *
+# Hardcode the constants to avoid import conflicts
+MODEL_NAME = "unsloth/Qwen3-4B-Base"
+MAX_SEQ_LENGTH = 2048
+LORA_RANK = 32
+GPU_MEMORY_UTILIZATION = 0.7
+SFT_BATCH_SIZE = 4
+SFT_WARMUP_STEPS = 5
+SFT_EPOCHS = 2
+SFT_LEARNING_RATE = 2e-4
+GRPO_BATCH_SIZE = 1
+GRPO_NUM_GENERATIONS = 4
+GRPO_MAX_STEPS = 50
+GRPO_LEARNING_RATE = 5e-6
+GRPO_TEMPERATURE = 1.0
+WEIGHT_DECAY = 0.01
+LR_SCHEDULER = "linear"
+SEED = 3407
+OPTIMIZER = "adamw_8bit"
+OUTPUT_DIR = "outputs"
+MODEL_SAVE_NAME = "di_control_lora"
+REASONING_START = "<REASONING>"
+REASONING_END = "</REASONING>"
+SOLUTION_START = "<CONTROLS>"
+SOLUTION_END = "</CONTROLS>"
 from data import get_system_prompt, format_dataset_for_sft
 from rewards import get_all_reward_functions
 from logger import logger
@@ -164,13 +187,25 @@ class ControlTrainer:
                 # Other functions don't need tokenizer injection
                 reward_funcs.append(func)
         
+        # Create prompts for GRPO (extract user queries from dataset)
+        prompts = []
+        for sample in dataset:
+            # Extract the user question from the Messages
+            user_message = sample["Messages"][1]["content"]  # User is at index 1
+            prompts.append(user_message)
+        
+        # Convert prompts to Dataset format for train_dataset
+        from datasets import Dataset
+        prompt_dict = {"prompt": prompts}
+        prompt_dataset = Dataset.from_dict(prompt_dict)
+        
         # Create trainer
         grpo_trainer = GRPOTrainer(
             model=self.model,
             processing_class=self.tokenizer,
             reward_funcs=reward_funcs,
             args=grpo_args,
-            train_dataset=dataset,
+            train_dataset=prompt_dataset,  # Use structured dataset with prompts
         )
         
         # Train

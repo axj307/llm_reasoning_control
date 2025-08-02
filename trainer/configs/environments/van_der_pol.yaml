@@ -1,0 +1,86 @@
+# Van der Pol Oscillator specific configuration
+# Inherits from base configuration
+
+defaults:
+  - /base/base
+
+# System identification
+system:
+  name: "van_der_pol"
+  description: "Van der Pol oscillator - nonlinear oscillator with damping"
+  state_dim: 2
+  action_dim: 1
+
+# Control parameters specific to Van der Pol
+control:
+  dt: 0.05  # Smaller time step for nonlinear dynamics
+  steps: 100  # More steps for complex trajectories
+  control_bounds: [-5.0, 5.0]
+  state_bounds: 
+    position: [-3.0, 3.0]
+    velocity: [-3.0, 3.0]
+  target_state: [0.0, 0.0]
+
+# Van der Pol specific parameters
+vdp:
+  mu: 1.0  # Damping parameter (nonlinearity strength)
+  
+# Numerical solver parameters
+solver:
+  method: "rk4"  # Runge-Kutta 4th order for nonlinear dynamics
+  tolerance: 1e-6
+
+# Dataset generation parameters
+dataset:
+  num_samples: 1000  # More samples for nonlinear system
+  initial_state_sampling: "grid"  # Better coverage of state space
+  initial_state_ranges:
+    position: [-2.5, 2.5]
+    velocity: [-2.5, 2.5]
+  grid_resolution: 10  # 10x10 grid
+  noise_level: 0.01  # Small noise for robustness
+
+# Training adjustments for Van der Pol
+training:
+  per_device_train_batch_size: 2  # Smaller batch due to complexity
+  learning_rate: 1e-4  # Lower learning rate
+  num_train_epochs: 3  # More epochs
+  
+# Evaluation specific to Van der Pol
+evaluation:
+  metrics:
+    - "final_state_error"
+    - "limit_cycle_distance"
+    - "energy_dissipation"
+    - "control_effort"
+    - "phase_portrait_similarity"
+  test_initial_conditions:
+    - [2.0, 0.0]    # On limit cycle
+    - [0.1, 0.0]    # Near origin
+    - [1.5, 1.5]    # Off limit cycle
+    - [-2.0, 0.0]   # Opposite side
+    - [0.0, 2.0]    # Different phase
+    - [2.5, -1.0]   # Outside limit cycle
+    - [-1.5, -1.5]  # Third quadrant
+    - [0.5, -2.0]   # Large velocity
+    - [-2.5, 1.0]   # Mixed signs
+    - [1.0, 0.0]    # Moderate position
+
+# System prompt template specific to Van der Pol
+formatting:
+  system_prompt_template: |
+    You are an expert in nonlinear control theory. Your task is to find a control sequence for a Van der Pol oscillator.
+    
+    System dynamics: 
+    ẋ = y
+    ẏ = μ(1 - x²)y - x + u
+    
+    Where μ = {vdp[mu]} (damping parameter)
+    
+    State: [x (position), y (velocity)]
+    Control bounds: u ∈ [{control_bounds[0]}, {control_bounds[1]}]
+    Time step: {dt} seconds
+    Number of steps: {steps}
+    Target state: [0, 0]
+    
+    The Van der Pol oscillator has a stable limit cycle. Design a control sequence that drives the system to the origin.
