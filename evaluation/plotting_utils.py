@@ -110,6 +110,7 @@ FIGURE_SIZES = {
     'comparison_2x1': (16, 6),
     'comparison_2x2': (14, 10),
     'comparison_3x2': (18, 12),
+    'comparison_single': (10, 8),   # Single plot for multiple trajectories
     'combined_dashboard': (20, 12),
     'control_dashboard': (16, 10),  # For control system dashboards
     'phase_portrait': (8, 8),       # Square for phase portraits
@@ -751,6 +752,12 @@ def get_color_scheme(plot_type='default'):
             'end': '#4B0082',          # Indigo for end (distinct from target)
             'bounds': '#d62728'        # Professional red for bounds
         },
+        'metrics': {
+            'excellent': '#228B22',    # Forest green for excellent performance
+            'good': '#32CD32',         # Lime green for good performance  
+            'poor': '#FF4500',         # Orange-red for poor performance
+            'neutral': '#4682B4'       # Steel blue for neutral metrics
+        },
         'control_scheme': BEAUTIFUL_COLORS['control_scheme'],
         'default': BEAUTIFUL_COLORS['palette_qualitative']
     }
@@ -884,6 +891,279 @@ def robust_moving_average(values, window=20, outlier_threshold=0.02):
         smoothed[i] = np.mean(filtered_values) if len(filtered_values) > 0 else values[i]
     
     return smoothed
+
+# Publication-ready scientific plotting standards for control systems
+WAYPOINT_COLORS = ['#FF1493', '#00CED1', '#DC143C', '#32CD32', '#FF4500']
+PHASE_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+PUBLICATION_COLORS = {
+    'target': '#DC143C',           # Deep red for final targets
+    'phase_transition': 'black',   # Black for phase transitions
+    'action_bounds': 'red',        # Red for action bounds
+    'grid': 'gray',                # Gray for grid lines
+    'model': '#1f77b4',           # Professional blue for model
+    'optimal': '#ff7f0e',         # Professional orange for optimal
+    'reference': '#2ca02c'        # Professional green for reference
+}
+
+def create_publication_figure(figsize=(15, 12)):
+    """Create publication-ready figure with 2x2 subplot layout."""
+    setup_beautiful_plotting()
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    plt.tight_layout(pad=4, h_pad=3.0, w_pad=3.0)
+    return fig, axes
+
+def add_subplot_labels(axes, labels=None):
+    """Add (a), (b), (c), (d) labels to subplots."""
+    if labels is None:
+        labels = ['(a) Phase Space', '(b) Position vs Time', '(c) Velocity vs Time', '(d) Control vs Time']
+    
+    positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    for i, (label, (row, col)) in enumerate(zip(labels, positions)):
+        if isinstance(axes, np.ndarray):
+            ax = axes[row, col] if len(axes.shape) == 2 else axes[i]
+        else:
+            ax = axes
+        ax.text(0.02, -0.25, label, transform=ax.transAxes, fontsize=16,
+                fontweight='bold', va='top', ha='left')
+
+def add_waypoint_annotations(ax, waypoints, colors=None):
+    """Add numbered waypoint annotations with colored circular backgrounds."""
+    if colors is None:
+        colors = WAYPOINT_COLORS
+    
+    for i, (x, y) in enumerate(waypoints):
+        color = colors[i % len(colors)]
+        # Create circular background
+        circle = plt.Circle((x, y), 0.05, color=color, alpha=0.8, zorder=10)
+        ax.add_patch(circle)
+        
+        # Add white text with number
+        offset = 16 if i == 1 else -16  # Waypoint 2 above, others below
+        ax.annotate(str(i+1), (x, y), xytext=(0, offset), 
+                   textcoords='offset points', ha='center', va='center',
+                   fontsize=14, fontweight='bold', color='white', zorder=11)
+
+def add_directional_arrows(ax, x, y, color='black', alpha=0.6, density=5):
+    """Add directional arrows to phase space trajectory."""
+    if len(x) < density * 2:
+        return
+    
+    # Add arrows at regular intervals
+    indices = np.linspace(density, len(x) - density, 5, dtype=int)
+    for idx in indices:
+        if idx < len(x) - 1:
+            dx = x[idx+1] - x[idx]
+            dy = y[idx+1] - y[idx]
+            # Scale arrow for visibility
+            scale = 0.3
+            ax.arrow(x[idx], y[idx], dx*scale, dy*scale,
+                    head_width=0.03, head_length=0.03,
+                    fc=color, ec=color, alpha=alpha, zorder=3)
+
+def plot_phase_space_subplot(ax, trajectories, title="Phase Space", show_arrows=True):
+    """Plot phase space trajectory with professional styling."""
+    colors = get_color_scheme('comparison')
+    
+    for i, (label, traj) in enumerate(trajectories.items()):
+        if traj is None:
+            continue
+            
+        states = traj['states']
+        x, y = states[:, 0], states[:, 1]
+        
+        # Get appropriate color
+        if label.lower() == 'model':
+            color = colors['model']
+            linewidth = 2.5
+            alpha = 0.8
+        elif label.lower() in ['optimal', 'lqr']:
+            color = colors['lqr']
+            linewidth = 2.5
+            alpha = 0.7
+            linestyle = '--'
+        else:
+            color = PHASE_COLORS[i % len(PHASE_COLORS)]
+            linewidth = 2.5
+            alpha = 0.8
+            linestyle = '-'
+        
+        # Plot trajectory
+        ax.plot(x, y, color=color, linewidth=linewidth, alpha=alpha,
+                linestyle=linestyle if 'linestyle' in locals() else '-', label=label)
+        
+        # Add directional arrows
+        if show_arrows:
+            add_directional_arrows(ax, x, y, color=color)
+        
+        # Mark start and end points
+        ax.scatter(x[0], y[0], s=12, c='#FF4500', marker='o', 
+                  edgecolor='white', linewidth=1, zorder=5)
+        ax.scatter(x[-1], y[-1], s=15, c=PUBLICATION_COLORS['target'], marker='X', 
+                  edgecolor='white', linewidth=1, zorder=5)
+    
+    # Mark target
+    ax.scatter(0, 0, s=15, c=PUBLICATION_COLORS['target'], marker='X',
+              edgecolor='white', linewidth=1, label='Target', zorder=5)
+    
+    # Set fixed phase space limits
+    ax.set_xlim([-0.9, 0.9])
+    ax.set_ylim([-0.9, 0.9])
+    
+    style_axes(ax, title=title, xlabel='Position', ylabel='Velocity', grid=True, box=True)
+    
+    # Add horizontal layout legend for phase space
+    legend_handles = [h for h in ax.get_legend_handles_labels()[0] 
+                     if any(label in str(h.get_label()).lower() for label in ['model', 'optimal', 'target'])]
+    if legend_handles:
+        add_beautiful_legend(ax, location='upper right', ncol=len(legend_handles) if len(legend_handles) <= 3 else 2)
+
+# Enhanced waypoint and directional visualization functions for control systems
+def add_enhanced_waypoint_annotations(ax, waypoints, colors=None, labels=None):
+    """Add numbered waypoint annotations with colored circular backgrounds and enhanced styling."""
+    if colors is None:
+        colors = WAYPOINT_COLORS
+    
+    for i, (x, y) in enumerate(waypoints):
+        color = colors[i % len(colors)]
+        
+        # Create circular background with enhanced visibility
+        circle = plt.Circle((x, y), 0.05, color=color, alpha=0.8, zorder=10)
+        ax.add_patch(circle)
+        
+        # Add white text with number - enhanced positioning
+        offset = 16 if i == 1 else -16  # Waypoint 2 above, others below
+        label = labels[i] if labels and i < len(labels) else str(i+1)
+        
+        ax.annotate(label, (x, y), xytext=(0, offset), 
+                   textcoords='offset points', ha='center', va='center',
+                   fontsize=14, fontweight='bold', color='white', zorder=11,
+                   bbox=dict(boxstyle='circle,pad=0.1', facecolor=color, 
+                            edgecolor='white', linewidth=1, alpha=0.9))
+
+def add_enhanced_directional_arrows(ax, x, y, color='black', alpha=0.6, density=5, scale=0.3):
+    """Add enhanced directional arrows to phase space trajectory with better visibility."""
+    if len(x) < density * 2:
+        return
+    
+    # Add arrows at regular intervals with enhanced styling
+    indices = np.linspace(density, len(x) - density, min(5, len(x)//density), dtype=int)
+    for idx in indices:
+        if idx < len(x) - 1:
+            dx = x[idx+1] - x[idx]
+            dy = y[idx+1] - y[idx]
+            
+            # Enhanced arrow properties for better visibility
+            ax.arrow(x[idx], y[idx], dx*scale, dy*scale,
+                    head_width=0.03, head_length=0.03,
+                    fc=color, ec=color, alpha=alpha, zorder=3,
+                    linewidth=1.5)
+
+def create_enhanced_comparison_figure(figsize=(15, 12), title=None):
+    """Create enhanced publication-ready figure with 2x2 subplot layout and improved styling."""
+    setup_beautiful_plotting()
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    
+    # Apply enhanced layout with better spacing
+    plt.tight_layout(pad=4, h_pad=3.0, w_pad=3.0)
+    
+    # Set overall title with enhanced styling
+    if title:
+        fig.suptitle(title, fontsize=20, fontweight='bold', y=0.95, 
+                    color=BEAUTIFUL_COLORS['black'])
+    
+    return fig, axes
+
+def add_enhanced_subplot_labels(axes, labels=None):
+    """Add enhanced (a), (b), (c), (d) labels to subplots with better positioning."""
+    if labels is None:
+        labels = ['(a) Phase Space', '(b) Position vs Time', '(c) Velocity vs Time', '(d) Control vs Time']
+    
+    positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    for i, (label, (row, col)) in enumerate(zip(labels, positions)):
+        if isinstance(axes, np.ndarray):
+            ax = axes[row, col] if len(axes.shape) == 2 else axes[i]
+        else:
+            ax = axes
+        
+        # Enhanced label positioning and styling
+        ax.text(0.02, -0.25, label, transform=ax.transAxes, fontsize=16,
+                fontweight='bold', va='top', ha='left', color=BEAUTIFUL_COLORS['black'],
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', 
+                         edgecolor='lightgray', alpha=0.8))
+
+def plot_enhanced_phase_space_subplot(ax, trajectories, title="Phase Space", show_arrows=True, 
+                                     show_target=True, phase_limits=None):
+    """Plot enhanced phase space trajectory with professional styling and improved visibility."""
+    colors = get_color_scheme('comparison')
+    
+    # Set fixed phase space limits for consistency
+    if phase_limits is None:
+        phase_limits = [-0.9, 0.9]
+    ax.set_xlim(phase_limits)
+    ax.set_ylim(phase_limits)
+    
+    for i, (label, traj) in enumerate(trajectories.items()):
+        if traj is None:
+            continue
+            
+        states = traj['states']
+        x, y = states[:, 0], states[:, 1]
+        
+        # Get appropriate color and styling
+        if label.lower() == 'model':
+            color = colors['model']
+            linewidth = 2.5
+            alpha = 0.8
+            linestyle = '-'
+        elif label.lower() in ['optimal', 'lqr']:
+            color = colors['lqr']
+            linewidth = 2.5
+            alpha = 0.7
+            linestyle = '--'
+        else:
+            color = PHASE_COLORS[i % len(PHASE_COLORS)]
+            linewidth = 2.5
+            alpha = 0.8
+            linestyle = '-'
+        
+        # Plot trajectory with enhanced styling
+        ax.plot(x, y, color=color, linewidth=linewidth, alpha=alpha,
+                linestyle=linestyle, label=label, zorder=2)
+        
+        # Add enhanced directional arrows
+        if show_arrows:
+            add_enhanced_directional_arrows(ax, x, y, color=color, alpha=alpha*0.8)
+        
+        # Mark start and end points with enhanced visibility
+        ax.scatter(x[0], y[0], s=12, c='#FF4500', marker='o', 
+                  edgecolor='white', linewidth=1, zorder=5, alpha=0.9)
+        ax.scatter(x[-1], y[-1], s=15, c=PUBLICATION_COLORS['target'], marker='X', 
+                  edgecolor='white', linewidth=1, zorder=5, alpha=0.9)
+    
+    # Mark target with enhanced styling
+    if show_target:
+        ax.scatter(0, 0, s=15, c=PUBLICATION_COLORS['target'], marker='X',
+                  edgecolor='white', linewidth=1, label='Target', zorder=5)
+    
+    # Enhanced axis styling
+    style_axes(ax, title=title, xlabel='Position', ylabel='Velocity', grid=True, box=True)
+    add_grid_and_box(ax, grid_style='both', box=True)
+    
+    # Add enhanced horizontal layout legend for phase space
+    legend_handles, legend_labels = ax.get_legend_handles_labels()
+    important_labels = ['Model', 'Optimal', 'LQR', 'Target']
+    
+    # Filter to keep only important legend items
+    filtered_handles = []
+    filtered_labels = []
+    for handle, label in zip(legend_handles, legend_labels):
+        if any(imp_label.lower() in label.lower() for imp_label in important_labels):
+            filtered_handles.append(handle)
+            filtered_labels.append(label)
+    
+    if filtered_handles:
+        ncol = min(len(filtered_handles), 3)  # Max 3 columns for readability
+        add_beautiful_legend(ax, handles=filtered_handles, location='upper right', ncol=ncol)
 
 # Control-specific plotting functions
 def plot_control_dashboard(results, system_name, save_path=None):

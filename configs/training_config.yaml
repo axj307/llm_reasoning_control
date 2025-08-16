@@ -6,18 +6,19 @@ sft:
   per_device_eval_batch_size: 2
   gradient_accumulation_steps: 1
   warmup_steps: 10
-  num_train_epochs: 4
+  num_train_epochs: 2
   learning_rate: 0.0002  # 2e-4
   logging_steps: 5
+  eval_strategy: "steps"  # Add evaluation strategy
   eval_steps: 100
   optim: "adamw_8bit"
   weight_decay: 0.01
   lr_scheduler_type: "linear"
   seed: 3407
-  report_to: "wandb"
-  save_steps: 500
-  save_total_limit: 3
-  load_best_model_at_end: true
+  report_to: "none"  # Disable wandb for simplicity
+  save_strategy: "no"  # Only save at the end
+  save_only_model: true  # Save only the model, not optimizer states
+  load_best_model_at_end: false  # Disable for simplicity
   metric_for_best_model: "eval_loss"
   greater_is_better: false
 
@@ -33,8 +34,8 @@ grpo:
   gradient_accumulation_steps: 1
   num_generations: 8
   max_completion_length: 2048
-  max_steps: 100
-  save_steps: 500
+  max_steps: 3
+  # save_steps: 500  # Disabled - no intermediate checkpoints
   report_to: "wandb"
   temperature: 1.0
   min_p: 0.1

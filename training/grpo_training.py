@@ -1,12 +1,14 @@
-"""GRPO training implementation."""
+"""Fixed GRPO training implementation based on working notebook."""
 
 import re
 import torch
 import numpy as np
 from typing import Dict, List, Any, Optional, Callable
 from vllm import SamplingParams
-from trl import GRPOConfig, GRPOTrainer
 from datasets import Dataset
+
+# Import TRL components
+from trl import GRPOConfig, GRPOTrainer
 
 from core.model_manager import UniversalModelManager
 from environments import get_system
@@ -21,7 +23,7 @@ def train_grpo_model(model_manager: UniversalModelManager,
                     solution_start: str = "<CONTROLS>",
                     solution_end: str = "</CONTROLS>") -> Dict[str, Any]:
     """
-    Train GRPO model on control data.
+    Train GRPO model on control data using EXACT working notebook approach.
     
     Args:
         model_manager: Universal model manager with loaded model
@@ -34,23 +36,46 @@ def train_grpo_model(model_manager: UniversalModelManager,
     Returns:
         Training results and metrics
     """
-    # Default GRPO training config
+    print("🎮 Setting up GRPO training (working notebook approach)...")
+    
+    # Clear memory first
+    torch.cuda.empty_cache()
+    import gc
+    gc.collect()
+    
+    # EXACT working notebook GRPO configuration
+    max_completion_length = 2048  # Match notebook exactly
+    model_max_length = model_manager.model.config.max_position_embeddings or 2048
+    
+    # vLLM sampling params (EXACT from notebook)
+    vllm_sampling_params = SamplingParams(
+        min_p=0.1,
+        top_p=1.0,
+        top_k=-1,
+        seed=3407,
+        stop=[model_manager.tokenizer.eos_token],
+        include_stop_str_in_output=True,
+    )
+    
+    # Match working notebook GRPO config EXACTLY
     default_config = {
+        "vllm_sampling_params": vllm_sampling_params,
+        "temperature": 1.0,  # Exact from notebook
         "learning_rate": 5e-6,
         "weight_decay": 0.01,
         "warmup_ratio": 0.1,
         "lr_scheduler_type": "linear",
         "optim": "adamw_8bit",
         "logging_steps": 1,
-        "per_device_train_batch_size": 8,
-        "gradient_accumulation_steps": 1,
-        "num_generations": 8,
-        "max_completion_length": 2048,
-        "max_steps": 100,
+        "per_device_train_batch_size": 4,  # Notebook adjusts to 4 for num_generations
+        "gradient_accumulation_steps": 1,  
+        "num_generations": 4,  # Working notebook uses 4 generations
+        "max_completion_length": max_completion_length,
+        "max_steps": 50,  # Working notebook uses 50 steps
         "save_steps": 500,
         "report_to": "wandb",
         "output_dir": "./temp_grpo_output",
-        "temperature": 1.0,
+        "temperature": 1.0,  # Working notebook uses temperature 1.0
         "min_p": 0.1,
         "top_p": 1.0,
         "top_k": -1,
@@ -62,6 +87,11 @@ def train_grpo_model(model_manager: UniversalModelManager,
     
     # Store training config
     model_manager.training_config = default_config
+    
+    # Log sequence length configuration
+    print(f"🔧 GRPO sequence length configuration:")
+    print(f"   Model max length: {model_max_length}")
+    print(f"   Max completion length: {max_completion_length}")
     
     # Set up VLLM sampling parameters
     vllm_sampling_params = SamplingParams(
@@ -93,76 +123,110 @@ def train_grpo_model(model_manager: UniversalModelManager,
         output_dir=default_config["output_dir"],
     )
     
-    # Prepare datasets for GRPO training
+    # Get the system type from data
+    system_types = list(set(d.get("system_type", "double_integrator") for d in train_data))
+    if len(system_types) == 1:
+        system_type = system_types[0]
+        system = get_system(system_type)()
+        system_prompt = system.get_system_prompt(
+            reasoning_start, reasoning_end, solution_start, solution_end
+        )
+    else:
+        # Universal model - use generic prompt
+        system_prompt = f"""You are a control systems expert.
+Given a control system with initial state, generate an optimal control sequence.
+Explain your approach between {reasoning_start} and {reasoning_end}.
+Then provide control values as a comma-separated list between {solution_start} and {solution_end}."""
+    
+    # Prepare datasets for GRPO training - match working notebook format exactly
     def format_for_grpo(example):
-        """Format a single example for GRPO training."""
-        messages = example["messages"]
+        """Format a single example for GRPO training - EXACT match to working notebook."""
+        # Get the messages - match working notebook format
+        messages = example.get("messages", example.get("Messages", []))
         
-        # For GRPO, we need the conversation up to the user message
-        # The assistant response will be generated during training
-        train_messages = messages[:-1]  # Remove assistant response
+        # Extract prompt (system + user messages only)
+        prompt_messages = []
+        for msg in messages:
+            if msg["role"] != "assistant":
+                prompt_messages.append(msg)
         
+        # Extract answer from controls field (as done in working notebook)
+        controls = example.get("controls", [])
+        if isinstance(controls, list):
+            answer = ", ".join([f"{u:.3f}" for u in controls])
+        else:
+            answer = str(controls)
+        
+        # Return EXACT format expected by GRPO trainer from working notebook
         return {
-            "messages": train_messages,
-            "system_type": example.get("system_type", "unknown"),
-            "initial_state": example["initial_state"],
-            "target_controls": example["controls"]
+            "prompt": prompt_messages,  # List of message dicts (system + user only)
+            "answer": answer,           # Control string
+            "Messages": messages        # Full conversation for reference (working notebook has this)
         }
     
     # Convert to HuggingFace format
     train_dataset = Dataset.from_list(train_data)
-    train_dataset = train_dataset.map(format_for_grpo)
+    train_dataset = train_dataset.map(format_for_grpo, remove_columns=train_dataset.column_names)
     
     eval_dataset = None
     if eval_data:
         eval_dataset = Dataset.from_list(eval_data)
-        eval_dataset = eval_dataset.map(format_for_grpo)
+        eval_dataset = eval_dataset.map(format_for_grpo, remove_columns=eval_dataset.column_names)
     
     print(f"Training dataset size: {len(train_dataset)}")
     if eval_dataset:
         print(f"Evaluation dataset size: {len(eval_dataset)}")
     
-    # Get reward functions
-    reward_functions = get_reward_functions(
+    # Setup chat template to match working notebook
+    chat_template = \
+        "{% if messages[0]['role'] == 'system' %}"\
+            "{{ messages[0]['content'] + eos_token }}"\
+            "{% set loop_messages = messages[1:] %}"\
+        "{% else %}"\
+            "{{ '{system_prompt}' + eos_token }}"\
+            "{% set loop_messages = messages %}"\
+        "{% endif %}"\
+        "{% for message in loop_messages %}"\
+            "{% if message['role'] == 'user' %}"\
+                "{{ message['content'] }}"\
+            "{% elif message['role'] == 'assistant' %}"\
+                "{{ message['content'] + eos_token }}"\
+            "{% endif %}"\
+        "{% endfor %}"\
+        "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
+        "{% endif %}"
+    
+    # Replace with specific values
+    chat_template = chat_template\
+        .replace("'{system_prompt}'", f"'{system_prompt}'")\
+        .replace("'{reasoning_start}'", f"'{reasoning_start}'")
+    
+    model_manager.tokenizer.chat_template = chat_template
+    
+    # Get reward functions with fixed parameters
+    reward_functions = get_reward_functions_fixed(
         reasoning_end, solution_start, solution_end,
-        model_manager.tokenizer
+        model_manager.tokenizer, system_type if len(system_types) == 1 else None
     )
     
     print(f"Using {len(reward_functions)} reward functions")
     
-    # Create trainer
+    # Now run GRPO training
     trainer = GRPOTrainer(
         model=model_manager.model,
         processing_class=model_manager.tokenizer,
         reward_funcs=reward_functions,
         args=grpo_config,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
     )
-    
-    print("Starting GRPO training...")
-    
-    # Train the model
-    train_result = trainer.train()
-    
-    print("GRPO training completed!")
-    
-    # Extract metrics
-    metrics = train_result.metrics if hasattr(train_result, 'metrics') else {}
-    
-    return {
-        "trainer": trainer,
-        "train_result": train_result,
-        "metrics": metrics,
-        "training_config": default_config
-    }
+    trainer.train()
 
 
-def get_reward_functions(reasoning_end: str, solution_start: str, solution_end: str,
-                        tokenizer) -> List[Callable]:
-    """Get reward functions for GRPO training."""
+def get_reward_functions_fixed(reasoning_end: str, solution_start: str, solution_end: str,
+                              tokenizer, system_type: Optional[str] = None) -> List[Callable]:
+    """Get reward functions for GRPO training - EXACT match to working notebook."""
     
-    # Define regex pattern to match control sequence
+    # Define regex pattern to match control sequence - EXACT from notebook
     solution_end_regex = rf"{re.escape(solution_end)}[\s]{{0,}}" + \
         f"(?:{re.escape(tokenizer.eos_token)})?"
 
@@ -178,6 +242,7 @@ def get_reward_functions(reasoning_end: str, solution_start: str, solution_end: 
         scores = []
         for completion in completions:
             score = 0.0
+            # Match working notebook format
             response = completion[0]["content"]
             if match_format.search(response) is not None:
                 score += 3.0
@@ -189,6 +254,7 @@ def get_reward_functions(reasoning_end: str, solution_start: str, solution_end: 
         scores = []
         for completion in completions:
             score = 0.0
+            # Match working notebook format
             response = completion[0]["content"]
             score += 0.5 if response.count(reasoning_end) == 1 else -1.0
             score += 0.5 if response.count(solution_start) == 1 else -1.0
@@ -196,119 +262,101 @@ def get_reward_functions(reasoning_end: str, solution_start: str, solution_end: 
             scores.append(score)
         return scores
     
-    def evaluate_control_performance(completions, prompts, **kwargs):
-        """Reward function: control performance evaluation."""
+    def evaluate_control_sequence(prompts, completions, answer, **kwargs):
+        """Enhanced evaluation of control sequences - match working notebook."""
         scores = []
         
-        # Performance parameters (aggressive rewards for good performance)
-        Q = np.diag([25.0, 5.0])  # State cost weights
-        R = 0.05  # Control cost weight
-        position_terminal_weight = 50.0
-        velocity_terminal_weight = 25.0
-        terminal_precision = 50.0
+        # Use system-specific parameters if available
+        if system_type == "double_integrator":
+            dt = 0.1
+            steps = 50
+        elif system_type == "van_der_pol":
+            dt = 0.1
+            steps = 50
+        else:
+            # Default values
+            dt = 0.1
+            steps = 50
         
-        for completion, prompt in zip(completions, prompts):
-            score = 0.0
+        for completion, true_answer in zip(completions, answer):
+            score = 0
             response = completion[0]["content"]
             
             # Extract control sequence
-            control_match = re.search(
-                rf"{re.escape(solution_start)}(.*?){re.escape(solution_end)}", 
-                response, re.DOTALL
-            )
-            
+            control_match = re.search(rf"{solution_start}(.*?){solution_end}", response, re.DOTALL)
             if control_match is None:
-                scores.append(-5.0)
+                scores.append(-2.0)
                 continue
-            
+                
             try:
                 # Parse control values
                 control_text = control_match.group(1).strip()
                 control_values = [float(x.strip()) for x in control_text.split(',')]
                 
-                # Determine system type from prompt
-                problem_text = prompt[-1]["content"].lower()
-                if "double integrator" in problem_text:
-                    system_type = "double_integrator"
-                    dt = 0.1
-                    steps = 50
-                    control_bounds = (-3.0, 3.0)
-                    state_bounds = (-1.0, 1.0)
-                elif "van der pol" in problem_text:
-                    system_type = "van_der_pol"
-                    dt = 0.1
-                    steps = 50
-                    control_bounds = (-5.0, 5.0)
-                    state_bounds = (-2.0, 2.0)
-                else:
-                    scores.append(-2.0)
-                    continue
-                
-                # Basic validation
+                # Check constraints
                 if len(control_values) == steps:
+                    score += 1.0
+                else:
+                    score -= 1.0
+                    
+                if all(-3 <= u <= 3 for u in control_values):
                     score += 1.0
                 else:
                     score -= 2.0
                 
-                control_min, control_max = control_bounds
-                if all(control_min <= u <= control_max for u in control_values):
-                    score += 0.5
-                else:
-                    score -= 3.0
+                # Check for LQR smoothness
+                if len(control_values) > 1:
+                    diffs = [abs(control_values[i] - control_values[i-1]) for i in range(1, len(control_values))]
+                    if max(diffs) < 1.5:  # Smooth control changes
+                        score += 1.5
                 
-                # Extract initial state from prompt
-                initial_match = re.search(r"position=([-\d\.]+), velocity=([-\d\.]+)", 
-                                        prompt[-1]["content"])
-                
+                # Simulate system
+                problem_text = prompts[0][-1]["content"]
+                initial_match = re.search(r"position=([-\d\.]+), velocity=([-\d\.]+)", problem_text)
                 if initial_match:
                     x0 = float(initial_match.group(1))
                     v0 = float(initial_match.group(2))
                     
-                    # Simulate trajectory based on system type
-                    system = get_system(system_type)(dt=dt, steps=steps)
-                    initial_state = np.array([x0, v0])
+                    # Simulate system with generated controls
+                    x, v = x0, v0
+                    valid_trajectory = True
                     
-                    try:
-                        trajectory = system.simulate_trajectory(initial_state, control_values)
+                    for u in control_values:
+                        v = v + u * dt
+                        x = x + v * dt
                         
-                        if trajectory['valid_trajectory']:
-                            score += 1.0
-                        else:
-                            score -= 5.0
-                        
-                        # Terminal state rewards
-                        final_state = trajectory['final_state']
-                        final_x, final_v = final_state
-                        
-                        # Exponential rewards for reaching origin
-                        position_reward = position_terminal_weight * np.exp(-terminal_precision * final_x**2)
-                        velocity_reward = velocity_terminal_weight * np.exp(-terminal_precision * final_v**2)
-                        score += position_reward + velocity_reward
-                        
-                        # Tiered rewards for precision
-                        if abs(final_x) < 0.005 and abs(final_v) < 0.005:
-                            score += 30.0
-                        elif abs(final_x) < 0.01 and abs(final_v) < 0.01:
-                            score += 20.0
-                        elif abs(final_x) < 0.05 and abs(final_v) < 0.05:
-                            score += 10.0
-                        elif abs(final_x) < 0.1 and abs(final_v) < 0.1:
-                            score += 5.0
+                        if not (-1 <= x <= 1 and -1 <= v <= 1):
+                            valid_trajectory = False
+                            break
                     
-                    except Exception as e:
-                        score -= 3.0
+                    # Reward valid trajectory
+                    if valid_trajectory:
+                        score += 1.0
+                    else:
+                        score -= 1.0
+                    
+                    # Reward based on final error
+                    final_error = np.sqrt(x**2 + v**2)
+                    if final_error < 0.1:
+                        score += 3.0
+                    elif final_error < 0.2:
+                        score += 2.0
+                    elif final_error < 0.5:
+                        score += 1.0
+                    else:
+                        score -= 1.0
                 
                 scores.append(score)
                 
             except Exception as e:
-                scores.append(-3.0)
-        
+                scores.append(-2.0)
+                
         return scores
     
     return [
         match_format_exactly,
         match_format_approximately,
-        evaluate_control_performance,
+        evaluate_control_sequence,
     ]
 
 

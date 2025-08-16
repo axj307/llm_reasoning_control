@@ -1,39 +1,37 @@
 #!/bin/bash
 #SBATCH --job-name=universal_control       # Job name
-#SBATCH --partition=gpu                     # Adjust partition name for your cluster
-#SBATCH --nodes=1                           # Number of nodes
-#SBATCH --ntasks=1                          # Number of tasks
-#SBATCH --cpus-per-task=10                  # Number of CPU cores
-#SBATCH --gres=gpu:1                        # Request 1 GPU (adjust type as needed)
-#SBATCH --mem=64G                           # Memory
-#SBATCH --time=24:00:00                     # Time limit
-#SBATCH --output=logs/slurm_%j.out          # Output path
-#SBATCH --error=logs/slurm_%j.err           # Error path
+#SBATCH --partition=pi_linaresr            # pi_linaresr, mit_normal_gpu
+#SBATCH --nodes=1                          # Number of nodes
+#SBATCH --ntasks=1                         # Number of tasks
+#SBATCH --cpus-per-task=10                 # Number of CPU cores
+#SBATCH --gres=gpu:h100:1                  # Request 1 H100 GPU
+#SBATCH --mem=100G                         # Memory
+#SBATCH --time=24:00:00                    # Time limit (24 hours)
+#SBATCH --output=logs/slurm_%j.out         # Output path
+#SBATCH --error=logs/slurm_%j.err          # Error path
 
-# Load necessary modules (adjust for your cluster)
+# Load necessary modules
 module purge
 module load cuda/12.4.0
-source activate unsloth_env  # Adjust environment name
+
+# Activate conda environment
+source ~/.bashrc
+conda activate unsloth_env
 
 # Get the SLURM job ID
 CURRENT_JOB_ID="${SLURM_JOB_ID}"
-OUTPUT_DIR="outputs/job_${CURRENT_JOB_ID}"
-EVAL_DIR="evaluation_results/job_${CURRENT_JOB_ID}"
-PLOTS_DIR="plots/job_${CURRENT_JOB_ID}"
+FIGURES_DIR="figures/job_${CURRENT_JOB_ID}"
 
 # Create necessary directories
-mkdir -p logs outputs evaluation_results plots
-mkdir -p "${OUTPUT_DIR}"
-mkdir -p "${EVAL_DIR}"
-mkdir -p "${PLOTS_DIR}"
+mkdir -p logs figures
+mkdir -p "${FIGURES_DIR}"
 
 echo "============================================="
 echo "UNIVERSAL CONTROL LLM TRAINING + EVALUATION"
 echo "============================================="
 echo "Job ID: ${CURRENT_JOB_ID}"
 echo "Started: $(date)"
-echo "Output Directory: ${OUTPUT_DIR}"
-echo "Evaluation Directory: ${EVAL_DIR}"
+echo "Figures Directory: ${FIGURES_DIR}"
 echo "============================================="
 
 # Check if we should resume from a previous job
@@ -71,16 +69,16 @@ if [ $? -eq 0 ]; then
     echo "✅ Universal model training completed successfully!"
     
     # Save training info
-    echo "Universal Model Training Results - Job ${CURRENT_JOB_ID}" > "${EVAL_DIR}/training_summary.txt"
-    echo "Systems: double_integrator, van_der_pol" >> "${EVAL_DIR}/training_summary.txt"
-    echo "Samples per system: 300" >> "${EVAL_DIR}/training_summary.txt"
-    echo "LoRA Rank: 32" >> "${EVAL_DIR}/training_summary.txt"
-    echo "Training completed: $(date)" >> "${EVAL_DIR}/training_summary.txt"
+    echo "Universal Model Training Results - Job ${CURRENT_JOB_ID}" > "${FIGURES_DIR}/training_summary.txt"
+    echo "Systems: double_integrator, van_der_pol" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "Samples per system: 300" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "LoRA Rank: 32" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "Training completed: $(date)" >> "${FIGURES_DIR}/training_summary.txt"
     
 else
     echo "❌ Universal model training failed!"
-    echo "Universal Training FAILED - Job ${CURRENT_JOB_ID}" > "${EVAL_DIR}/training_summary.txt"
-    echo "Check logs/slurm_${CURRENT_JOB_ID}.err for details" >> "${EVAL_DIR}/training_summary.txt"
+    echo "Universal Training FAILED - Job ${CURRENT_JOB_ID}" > "${FIGURES_DIR}/training_summary.txt"
+    echo "Check logs/slurm_${CURRENT_JOB_ID}.err for details" >> "${FIGURES_DIR}/training_summary.txt"
     exit 1
 fi
 
@@ -98,14 +96,14 @@ python scripts/evaluate_model.py \
     --num-test-cases 20 \
     --test-type both \
     --save-plots \
-    --plot-dir "${PLOTS_DIR}" \
+    --plot-dir "${FIGURES_DIR}" \
     --gpu-id 0
 
 if [ $? -eq 0 ]; then
     echo "✅ SFT model evaluation completed successfully!"
     
     # Rename plots to indicate SFT
-    cd "${PLOTS_DIR}"
+    cd "${FIGURES_DIR}"
     for file in *.png; do
         if [[ -f "$file" ]]; then
             mv "$file" "sft_$file"
@@ -115,7 +113,7 @@ if [ $? -eq 0 ]; then
     
 else
     echo "❌ SFT model evaluation failed!"
-    echo "SFT EVALUATION FAILED" >> "${EVAL_DIR}/training_summary.txt"
+    echo "SFT EVALUATION FAILED" >> "${FIGURES_DIR}/training_summary.txt"
 fi
 
 # ===================
@@ -132,14 +130,14 @@ python scripts/evaluate_model.py \
     --num-test-cases 20 \
     --test-type both \
     --save-plots \
-    --plot-dir "${PLOTS_DIR}" \
+    --plot-dir "${FIGURES_DIR}" \
     --gpu-id 0
 
 if [ $? -eq 0 ]; then
     echo "✅ GRPO model evaluation completed successfully!"
     
     # Rename plots to indicate GRPO
-    cd "${PLOTS_DIR}"
+    cd "${FIGURES_DIR}"
     for file in *.png; do
         if [[ -f "$file" && ! "$file" =~ ^sft_ ]]; then
             mv "$file" "grpo_$file"
@@ -148,17 +146,17 @@ if [ $? -eq 0 ]; then
     cd "${SLURM_SUBMIT_DIR}"
     
     # Update evaluation summary
-    echo "" >> "${EVAL_DIR}/training_summary.txt"
-    echo "=== EVALUATION RESULTS ===" >> "${EVAL_DIR}/training_summary.txt"
-    echo "Test Cases per System: 20" >> "${EVAL_DIR}/training_summary.txt"
-    echo "SFT evaluation: ✅ SUCCESS" >> "${EVAL_DIR}/training_summary.txt"
-    echo "GRPO evaluation: ✅ SUCCESS" >> "${EVAL_DIR}/training_summary.txt"
-    echo "Evaluation completed: $(date)" >> "${EVAL_DIR}/training_summary.txt"
-    echo "Plots saved to: ${PLOTS_DIR}/" >> "${EVAL_DIR}/training_summary.txt"
+    echo "" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "=== EVALUATION RESULTS ===" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "Test Cases per System: 20" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "SFT evaluation: ✅ SUCCESS" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "GRPO evaluation: ✅ SUCCESS" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "Evaluation completed: $(date)" >> "${FIGURES_DIR}/training_summary.txt"
+    echo "All results saved to: ${FIGURES_DIR}/" >> "${FIGURES_DIR}/training_summary.txt"
     
 else
     echo "❌ GRPO model evaluation failed!"
-    echo "GRPO EVALUATION FAILED" >> "${EVAL_DIR}/training_summary.txt"
+    echo "GRPO EVALUATION FAILED" >> "${FIGURES_DIR}/training_summary.txt"
 fi
 
 # ===================
@@ -171,20 +169,17 @@ echo "============================================="
 echo "✅ Universal Model Training: SUCCESS"
 echo "✅ SFT Evaluation: SUCCESS" 
 echo "✅ GRPO Evaluation: SUCCESS"
-echo "📊 Results saved to: ${EVAL_DIR}/"
-echo "📈 Plots saved to: ${PLOTS_DIR}/"
+echo "📊 All results saved to: ${FIGURES_DIR}/"
 echo "🔗 SFT Model: models/universal/sft/latest"
 echo "🔗 GRPO Model: models/universal/grpo/latest"
 echo "Completed: $(date)"
 echo "============================================="
 
-# Copy important files to evaluation directory
-cp "${PLOTS_DIR}"/*.png "${EVAL_DIR}/" 2>/dev/null || true
+# Everything is already in figures directory - no copying needed
 
 # Add success message
 echo "Job completed with ID ${CURRENT_JOB_ID}"
-echo "Results can be found in: ${OUTPUT_DIR}"
-echo "Evaluation results in: ${EVAL_DIR}"
+echo "All results can be found in: ${FIGURES_DIR}"
 echo "🎉 Universal control training job finished successfully!"
 
 # === Alternative Configuration Examples ===

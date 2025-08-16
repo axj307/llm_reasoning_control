@@ -5,9 +5,9 @@ import scipy.linalg as la
 from typing import List, Tuple, Optional
 
 
-def solve_double_integrator_lqr(x0: float, v0: float, dt: float, steps: int,
-                                Q: Optional[np.ndarray] = None, 
-                                R: Optional[float] = None) -> List[float]:
+def _solve_double_integrator_lqr_internal(x0: float, v0: float, dt: float, steps: int,
+                                          Q: Optional[np.ndarray] = None, 
+                                          R: Optional[float] = None) -> List[float]:
     """
     Compute LQR optimal control sequence for the double integrator.
     
@@ -60,7 +60,7 @@ def solve_double_integrator_lqr(x0: float, v0: float, dt: float, steps: int,
         u = -K @ x
         
         # Clamp control within bounds
-        u_clamped = float(max(u_min, min(u_max, float(u[0]))))
+        u_clamped = float(max(u_min, min(u_max, u.item())))
         
         # Apply control to system
         x = A @ x + B * u_clamped
@@ -74,6 +74,31 @@ def solve_double_integrator_lqr(x0: float, v0: float, dt: float, steps: int,
         states.append(x.copy())
     
     return controls
+
+
+def solve_double_integrator_lqr(initial_state, dt: float, steps: int,
+                                Q: Optional[np.ndarray] = None, 
+                                R: Optional[float] = None) -> List[float]:
+    """
+    Wrapper function to match the expected data pipeline interface.
+    
+    Args:
+        initial_state: Initial state [x0, v0] as list/array
+        dt: Time step
+        steps: Number of control steps
+        Q: State cost matrix (2x2), default: diag([10.0, 10.0])
+        R: Control cost scalar, default: 0.1
+        
+    Returns:
+        List of control inputs
+    """
+    # Convert initial_state to separate x0, v0 parameters
+    if isinstance(initial_state, (list, tuple, np.ndarray)):
+        x0, v0 = float(initial_state[0]), float(initial_state[1])
+    else:
+        raise ValueError("initial_state must be a list/array with [x0, v0]")
+    
+    return _solve_double_integrator_lqr_internal(x0, v0, dt, steps, Q, R)
 
 
 def compute_lqr_cost(states: List[np.ndarray], controls: List[float],
@@ -122,6 +147,6 @@ def solve_lqr_with_different_weights(x0: float, v0: float, dt: float, steps: int
     """
     solutions = []
     for Q, R in weight_configs:
-        controls = solve_double_integrator_lqr(x0, v0, dt, steps, Q, R)
+        controls = _solve_double_integrator_lqr_internal(x0, v0, dt, steps, Q, R)
         solutions.append(controls)
     return solutions

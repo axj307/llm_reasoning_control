@@ -36,14 +36,16 @@ def train_sft_model(model_manager: UniversalModelManager,
         "learning_rate": 2e-4,
         "logging_steps": 5,
         "eval_steps": 100,
+        "save_steps": 100,  # Match eval_steps
+        "eval_strategy": "steps",
+        "save_strategy": "steps",  # Match eval_strategy
         "optim": "adamw_8bit",
         "weight_decay": 0.01,
         "lr_scheduler_type": "linear",
         "seed": 3407,
-        "report_to": "wandb",
-        "save_steps": 500,
+        "report_to": "none",  # Disable wandb for simplicity
         "save_total_limit": 3,
-        "load_best_model_at_end": True,
+        "load_best_model_at_end": False,  # Disable for simplicity
         "metric_for_best_model": "eval_loss",
         "greater_is_better": False,
     }
@@ -54,17 +56,58 @@ def train_sft_model(model_manager: UniversalModelManager,
     # Store training config in model manager
     model_manager.training_config = default_config
     
-    # Prepare datasets for SFT training
+    # Check if chat template is set up, if not, set it up
+    if not hasattr(model_manager.tokenizer, 'chat_template') or model_manager.tokenizer.chat_template is None:
+        print("⚠️  Chat template not set, setting up default template...")
+        # Set up a basic chat template
+        from environments import get_system
+        
+        # Get system type from first example
+        system_type = train_data[0].get("system_type", "double_integrator")
+        
+        try:
+            system = get_system(system_type)()
+            system_prompt = system.get_system_prompt(
+                "<REASONING>", "</REASONING>", "<CONTROLS>", "</CONTROLS>"
+            )
+        except:
+            # Fallback system prompt
+            system_prompt = "You are a control systems expert."
+        
+        model_manager.setup_chat_template(
+            reasoning_start="<REASONING>",
+            reasoning_end="</REASONING>",
+            solution_start="<CONTROLS>",
+            solution_end="</CONTROLS>",
+            system_prompt=system_prompt
+        )
+        print("✅ Chat template set up successfully")
+    
+    # Prepare datasets for SFT training - match working notebook format exactly
     def format_for_sft(example):
-        """Format a single example for SFT training."""
-        messages = example["messages"]
+        """Format a single example for SFT training - match working notebook approach."""
+        # Use Messages field (capital M) like the notebook
+        messages = example.get("Messages", example.get("messages", []))
         
         # Apply chat template to create training text
-        text = model_manager.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=False  # Include the full conversation
-        )
+        # Make sure we include the full conversation with assistant response
+        try:
+            text = model_manager.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False  # Include the full conversation including assistant
+            )
+        except Exception as e:
+            print(f"Warning: Chat template failed for example, using fallback: {e}")
+            # Fallback: manual formatting matching working notebook
+            text = ""
+            for msg in messages:
+                if msg["role"] == "system":
+                    text += msg["content"] + model_manager.tokenizer.eos_token
+                elif msg["role"] == "user":
+                    text += msg["content"]
+                elif msg["role"] == "assistant":
+                    text += msg["content"] + model_manager.tokenizer.eos_token
         
         return {
             "text": text,
@@ -87,32 +130,30 @@ def train_sft_model(model_manager: UniversalModelManager,
     # Set up training arguments
     training_args = TrainingArguments(**default_config)
     
-    # Create trainer
+    # Pre fine-tune the model to learn the format
+    from trl import SFTTrainer, SFTConfig
     trainer = SFTTrainer(
         model=model_manager.model,
         tokenizer=model_manager.tokenizer,
         train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        args=training_args,
-        dataset_text_field="text",
+        args=SFTConfig(
+            dataset_text_field="text",
+            per_device_train_batch_size=4,  # Increased from 1
+            gradient_accumulation_steps=1,
+            warmup_steps=5,
+            num_train_epochs=2,
+            learning_rate=2e-4,
+            logging_steps=5,
+            optim="adamw_8bit",
+            weight_decay=0.01,
+            lr_scheduler_type="linear",
+            seed=3407,
+            report_to="wandb",
+        ),
     )
-    
-    print("Starting SFT training...")
-    
-    # Train the model
-    train_result = trainer.train()
-    
-    print("SFT training completed!")
-    
-    # Extract metrics
-    metrics = train_result.metrics if hasattr(train_result, 'metrics') else {}
-    
-    return {
-        "trainer": trainer,
-        "train_result": train_result,
-        "metrics": metrics,
-        "training_config": default_config
-    }
+
+    # Run pre-training
+    trainer.train()
 
 
 def setup_universal_chat_template(model_manager: UniversalModelManager,
@@ -126,7 +167,7 @@ def setup_universal_chat_template(model_manager: UniversalModelManager,
     # Universal system prompt that works for any system
     if len(systems) == 1:
         # Single system prompt
-        from systems import get_system
+        from environments import get_system
         system = get_system(systems[0])()
         system_prompt = system.get_system_prompt(reasoning_start, reasoning_end, 
                                                 solution_start, solution_end)

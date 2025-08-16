@@ -1,6 +1,6 @@
 """
-2025.7.8
-2025.7.7
+2025.6.1
+2025.6.1
 4.51.3
 0.15.2
 __UNSLOTH_VERSIONING__
@@ -9,8 +9,7 @@ from torch import Tensor
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Any, List, Optional, Tuple, Union, Dict, Set, Callable
-from trl.trainer.grpo_trainer import (Any, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer, Dataset, GRPOConfig, GRPOTrainer, GenerationConfig, IterableDataset, LLM, Optional, PeftConfig, PreTrainedModel, PreTrainedTokenizerBase, RepeatRandomSampler, RewardFunc, Sampler, SamplingParams, SyncRefModelCallback, Trainer, TrainerCallback, Union, apply_chat_template, broadcast_object_list, create_reference_model, defaultdict, gather, gather_object, generate_model_card, get_comet_experiment_url, is_conversational, is_deepspeed_zero3_enabled, is_peft_model, is_wandb_available, maybe_apply_chat_template, nn, os, pad, prepare_deepspeed, selective_log_softmax, set_seed, textwrap, torch, transformers, unwrap_model_for_generation, version, wandb, warnings, os, selective_log_softmax, torch, transformers, Any, LLM, Union, apply_chat_template, broadcast_object_list, gather, gather_object, is_conversational, maybe_apply_chat_template, nn, os, pad, torch, unwrap_model_for_generation, wandb, GRPOTrainer, Trainer, gather, os, torch)
+from trl.trainer.grpo_trainer import (Any, AutoModelForCausalLM, AutoModelForSequenceClassification, AutoTokenizer, Dataset, GRPOConfig, GRPOTrainer, GenerationConfig, IterableDataset, LLM, Optional, PeftConfig, PreTrainedModel, PreTrainedTokenizerBase, RepeatRandomSampler, RewardFunc, Sampler, SamplingParams, SyncRefModelCallback, Trainer, TrainerCallback, Union, apply_chat_template, broadcast_object_list, create_reference_model, defaultdict, gather, gather_object, generate_model_card, get_comet_experiment_url, is_conversational, is_deepspeed_zero3_enabled, is_peft_model, is_wandb_available, maybe_apply_chat_template, nn, os, pad, prepare_deepspeed, set_seed, textwrap, torch, transformers, unwrap_model_for_generation, version, wandb, warnings, os, torch, transformers, Any, LLM, Union, apply_chat_template, broadcast_object_list, gather, gather_object, is_conversational, maybe_apply_chat_template, nn, os, pad, torch, unwrap_model_for_generation, wandb, GRPOTrainer, Trainer, gather, os, torch)
 
 
 import os
@@ -32,22 +31,14 @@ torch_compile_options = {
 }
 
 @torch.compile(dynamic = True, fullgraph = True, options = torch_compile_options,)
-def chunked_selective_log_softmax(logits, index):
-    # Split into 4 chunks only
-    chunked_logits = torch.chunk(logits.reshape(-1, logits.shape[-1]), chunks = 4, dim = 0)
-    chunked_index  = torch.chunk(index.reshape(-1), chunks = 4, dim = 0)
-    all_per_token_logps = []
-    # Below loop does the same as selective_log_softmax(chunk_logits, chunk_index)
-    for chunk_logits, chunk_index in zip(chunked_logits, chunked_index):
-        chunk_logits = chunk_logits.to(torch.float32)
-        selected_logits = torch.gather(chunk_logits, dim = -1, index = chunk_index.unsqueeze(-1)).squeeze(-1)
-        logsumexp_values = torch.logsumexp(chunk_logits, dim = -1)
-        per_token_logps = selected_logits - logsumexp_values
-        all_per_token_logps.append(per_token_logps)
-    pass
-    all_per_token_logps = torch.concat(all_per_token_logps)
-    all_per_token_logps = all_per_token_logps.reshape((logits.shape[0], logits.shape[1]))
-    return all_per_token_logps
+def selective_log_softmax(logits, index):
+    logits = logits.to(torch.float32)
+    selected_logits = torch.gather(logits, dim = -1, index = index.unsqueeze(-1)).squeeze(-1)
+    # loop to reduce peak mem consumption
+    # logsumexp_values = torch.stack([torch.logsumexp(lg, dim=-1) for lg in logits])
+    logsumexp_values = torch.logsumexp(logits, dim = -1)
+    per_token_logps = selected_logits - logsumexp_values  # log_softmax(x_i) = x_i - logsumexp(x)
+    return per_token_logps
 
 def grpo_compute_loss(
     ref_logits,
@@ -59,61 +50,30 @@ def grpo_compute_loss(
     advantages,
     **kwargs
 ):
-    # All Unsloth Zoo code licensed under LGPLv3
     # Set defaults for optional arguments
-    loss_type = kwargs.get("loss_type", "grpo")
+    loss_type = kwargs.get("loss_type", "bnpo")
     epsilon_low = kwargs.get("epsilon_low", 0.2)
     epsilon_high = kwargs.get("epsilon_high", 0.2)
     max_completion_length = kwargs.get("max_completion_length", 8192)
     delta = kwargs.get("delta", None)
-    temperature = kwargs.get("temperature", 1.0)
-    logit_scale_multiply = kwargs.get("logit_scale_multiply", 0.0)
-    logit_scale_divide   = kwargs.get("logit_scale_divide", 0.0)
-    logit_softcapping    = kwargs.get("logit_softcapping", 0.0)
 
-    input_ids = input_ids.unsqueeze(-1)
-
-    # Optional logit softcapping and logit dividing
-    if logit_scale_multiply != 0: new_logits = new_logits * logit_scale_multiply
-    if logit_scale_divide   != 0: new_logits = new_logits / logit_scale_divide
-    if logit_softcapping    != 0: new_logits = new_logits * torch.tanh(new_logits / logit_softcapping)
-
+    # All Unsloth Zoo code licensed under LGPLv3
     new_logits = new_logits.to(torch.float32)
-    # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
-    if temperature != 1.0: new_logits = new_logits / temperature
-    new_x = torch.gather(new_logits, dim = -1, index = input_ids).squeeze(-1)
-    new = new_x - torch.logsumexp(new_logits, dim = -1)
+    input_ids  = input_ids.unsqueeze(-1)
 
     # x_i - logsumexp(x_i)
+
     with torch.no_grad():
         if beta != 0.0:
             assert ref_logits is not None, "ref_logits should not be None when beta != 0.0"
-            
-            # Optional logit softcapping and logit dividing
-            if logit_scale_multiply != 0: ref_logits = ref_logits * logit_scale_multiply
-            if logit_scale_divide   != 0: ref_logits = ref_logits / logit_scale_divide
-            if logit_softcapping    != 0: ref_logits = ref_logits * torch.tanh(ref_logits / logit_softcapping)
-
             ref_logits = ref_logits.to(torch.float32)
-            # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
-            if temperature != 1.0: ref_logits = ref_logits / temperature
             ref_x = torch.gather(ref_logits, dim = -1, index = input_ids).squeeze(-1)
             ref = ref_x - torch.logsumexp(ref_logits, dim = -1)
-        pass
-
         if old_logits is not None:
-            # Optional logit softcapping and logit dividing
-            if logit_scale_multiply != 0: old_logits = old_logits * logit_scale_multiply
-            if logit_scale_divide   != 0: old_logits = old_logits / logit_scale_divide
-            if logit_softcapping    != 0: old_logits = old_logits * torch.tanh(old_logits / logit_softcapping)
-
-            old_logits = old_logits.to(torch.float32)
-            # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
-            if temperature != 1.0: old_logits = old_logits / temperature
             old_x = torch.gather(old_logits, dim = -1, index = input_ids).squeeze(-1)
             old = old_x - torch.logsumexp(old_logits, dim = -1)
-        pass
-    pass
+    new_x = torch.gather(new_logits, dim = -1, index = input_ids).squeeze(-1)
+    new = new_x - torch.logsumexp(new_logits, dim = -1)
 
     # Reverse KL
     # Note that this is a low variance low bias estimator for the KL divergence as used in GRPO paper
@@ -137,11 +97,12 @@ def grpo_compute_loss(
         loss_1 = torch.clamp(coef_1, max=delta) * advantages.unsqueeze(1)
     else:
         loss_1 = coef_1 * advantages.unsqueeze(1)
-    pass
 
+    
     # Must detach - otherwise gradients are not propagated correctly!
     # exp(x - x) == 1
     # loss_i = torch.exp(new - new.detach()) * advantages.unsqueeze(1)
+    
 
     loss_2 = coef_2 * advantages.unsqueeze(1)
     loss_i = -torch.min(loss_1, loss_2)
@@ -178,15 +139,13 @@ class UnslothEfficientGRPO(torch.autograd.Function):
     def forward(ctx, _new_hidden_states, _old_hidden_states, _ref_hidden_states, lm_head, _input_ids, _mask, _advantages, beta, scaler = None, n_chunks = 1, extra_kwargs=None):
         if extra_kwargs is None:
             extra_kwargs = {}
-        def compute_loss(new_hidden_states, old_hidden_states, ref_hidden_states, input_ids, mask, advantages, scaling):
+        def compute_loss(new_hidden_states, old_hidden_states, ref_hidden_states,input_ids, mask, advantages, scaling):
             new_logits = torch.matmul(new_hidden_states, lm_head.t())
             new_logits = new_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred
-            with torch.no_grad():
-                if beta != 0.0:
-                    ref_logits = torch.matmul(ref_hidden_states, lm_head.t())
-                    ref_logits = ref_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred 
-                else:
-                    ref_logits = None
+            with torch.no_grad(): 
+                ref_logits = torch.matmul(ref_hidden_states, lm_head.t())
+                ref_logits = ref_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred 
+                old_logits = None
                 if old_hidden_states is not None:
                     old_logits = torch.matmul(old_hidden_states, lm_head.t())
                     old_logits = old_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred 
@@ -196,17 +155,9 @@ class UnslothEfficientGRPO(torch.autograd.Function):
             #     old_logits = torch.matmul(old_hidden_states, lm_head.t()) #last logit already excluded
             #     old_logits = old_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred 
             # else:
-            #     old_logits = None
-            # unsloth_zoo/rl_replacements.py
+            #     old_logits = Noneunsloth_zoo/rl_replacements.py
             loss, completion_length, mean_kl = grpo_compute_loss(
-                ref_logits,
-                new_logits,
-                old_logits,
-                input_ids,
-                mask,
-                beta,
-                advantages,
-                **extra_kwargs,
+                ref_logits, new_logits,old_logits, input_ids, mask, beta, advantages, **extra_kwargs
             )
 
             # Scale loss if needed for mixed precision training
@@ -291,7 +242,6 @@ class UnslothEfficientGRPO(torch.autograd.Function):
 def grpo_accumulated_loss(
     trainer,
     input_ids,
-    attention_mask,
     logits_to_keep,
     completion_mask,
     advantages,
@@ -301,67 +251,44 @@ def grpo_accumulated_loss(
 ):
     # All Unsloth Zoo code licensed under LGPLv3
     bsz, qlen = input_ids.shape
-
+    
     # Find closest multiple
     factors = [i for i in range(1, bsz + 1) if bsz % i == 0]
     if n_chunks == -1: n_chunks = bsz
     n_chunks = factors[min(np.searchsorted(factors, n_chunks), len(factors)-1)]
 
-    if not hasattr(trainer, '_autocast_dtype'):
-        trainer._autocast_dtype = torch.float16 if os.environ.get('ACCELERATE_MIXED_PRECISION', 'fp16') == 'fp16' else torch.bfloat16
-        if os.environ.get('UNSLOTH_FORCE_FLOAT32', '0') == '1': trainer._autocast_dtype = torch.float16
-    pass
+    mixed_dtype = torch.float16 if os.environ.get('ACCELERATE_MIXED_PRECISION', 'fp16') == 'fp16' else torch.bfloat16
     os.environ["UNSLOTH_RETURN_HIDDEN_STATES"] = "1"
 
     completion_input_ids = input_ids[:, -logits_to_keep:]
     lm_head = trainer.model.get_output_embeddings().weight
 
-    with torch.amp.autocast(device_type = trainer.model.device.type, dtype = trainer._autocast_dtype):
+    with torch.amp.autocast(device_type = "cuda", dtype = mixed_dtype):
+        #breakpoint()
         with torch.inference_mode(), trainer.accelerator.unwrap_model(trainer.model, keep_fp32_wrapper = False).disable_adapter():
-            ref_hidden_states = trainer.model(
-                input_ids = input_ids,
-                attention_mask = attention_mask,
-                logits_to_keep = logits_to_keep + 1,
-            ).logits
+            ref_hidden_states = trainer.model(input_ids = input_ids, logits_to_keep = logits_to_keep + 1).logits
         pass
-        new_hidden_states = trainer.model(
-            input_ids = input_ids,
-            attention_mask = attention_mask,
-            logits_to_keep = logits_to_keep + 1,
-        ).logits
-
+        
+        new_hidden_states = trainer.model(input_ids = input_ids, logits_to_keep = logits_to_keep + 1).logits
+        
         loss, completion_length, mean_kl = UnslothEfficientGRPO.apply(
-            new_hidden_states,
-            old_hidden_states,
-            ref_hidden_states,
-            lm_head,
-            completion_input_ids,
-            completion_mask,
-            advantages,
-            trainer.beta,
+            new_hidden_states, old_hidden_states ,ref_hidden_states, lm_head,
+            completion_input_ids, completion_mask, advantages, trainer.beta,
             trainer.accelerator.scaler,
-            n_chunks,
-            kwargs # pass kwargs as a dict
+            n_chunks, kwargs # pass kwargs as a dict
         )
-    pass
-    # Must force not returning hidden states but logits otherwise gibberish
-    os.environ["UNSLOTH_RETURN_HIDDEN_STATES"] = "0"
-    return loss, completion_length, mean_kl
 
-    # Old non efficient code path
-    new_logits = torch.matmul(new_hidden_states, lm_head.t())
-    new_logits = new_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred
-    old_logits = torch.matmul(old_hidden_states, lm_head.t())
-    old_logits = old_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred
-    loss, completion_length, mean_kl = grpo_compute_loss(
-        old_logits,
-        new_logits,
-        completion_input_ids,
-        completion_mask,
-        trainer.beta,
-        advantages,
-    )
-    return loss, completion_length, mean_kl
+        return loss, completion_length, mean_kl
+
+        # Old non efficient code path
+        new_logits = torch.matmul(new_hidden_states, lm_head.t())
+        new_logits = new_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred
+        old_logits = torch.matmul(old_hidden_states, lm_head.t())
+        old_logits = old_logits[:, :-1, :] # exclude the last logit: it corresponds to the next token pred
+        loss, completion_length, mean_kl = grpo_compute_loss(
+            old_logits, new_logits, completion_input_ids, completion_mask, trainer.beta, advantages,
+        )
+        return loss, completion_length, mean_kl
     pass
 
 @torch.compile(dynamic = True, fullgraph = True, options = torch_compile_options)
@@ -375,61 +302,30 @@ def grpo_compute_loss_slow(
     advantages,
     **kwargs
 ):
-    # All Unsloth Zoo code licensed under LGPLv3
     # Set defaults for optional arguments
-    loss_type = kwargs.get("loss_type", "grpo")
+    loss_type = kwargs.get("loss_type", "bnpo")
     epsilon_low = kwargs.get("epsilon_low", 0.2)
     epsilon_high = kwargs.get("epsilon_high", 0.2)
     max_completion_length = kwargs.get("max_completion_length", 8192)
     delta = kwargs.get("delta", None)
-    temperature = kwargs.get("temperature", 1.0)
-    logit_scale_multiply = kwargs.get("logit_scale_multiply", 0.0)
-    logit_scale_divide   = kwargs.get("logit_scale_divide", 0.0)
-    logit_softcapping    = kwargs.get("logit_softcapping", 0.0)
 
-    input_ids = input_ids.unsqueeze(-1)
-
-    # Optional logit softcapping and logit dividing
-    if logit_scale_multiply != 0: new_logits = new_logits * logit_scale_multiply
-    if logit_scale_divide   != 0: new_logits = new_logits / logit_scale_divide
-    if logit_softcapping    != 0: new_logits = new_logits * torch.tanh(new_logits / logit_softcapping)
-
+    # All Unsloth Zoo code licensed under LGPLv3
     new_logits = new_logits.to(torch.float32)
-    # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
-    if temperature != 1.0: new_logits = new_logits / temperature
-    new_x = torch.gather(new_logits, dim = -1, index = input_ids).squeeze(-1)
-    new = new_x - torch.logsumexp(new_logits, dim = -1)
+    input_ids  = input_ids.unsqueeze(-1)
 
     # x_i - logsumexp(x_i)
+
     with torch.no_grad():
         if beta != 0.0:
             assert ref_logits is not None, "ref_logits should not be None when beta != 0.0"
-            
-            # Optional logit softcapping and logit dividing
-            if logit_scale_multiply != 0: ref_logits = ref_logits * logit_scale_multiply
-            if logit_scale_divide   != 0: ref_logits = ref_logits / logit_scale_divide
-            if logit_softcapping    != 0: ref_logits = ref_logits * torch.tanh(ref_logits / logit_softcapping)
-
             ref_logits = ref_logits.to(torch.float32)
-            # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
-            if temperature != 1.0: ref_logits = ref_logits / temperature
             ref_x = torch.gather(ref_logits, dim = -1, index = input_ids).squeeze(-1)
             ref = ref_x - torch.logsumexp(ref_logits, dim = -1)
-        pass
-
         if old_logits is not None:
-            # Optional logit softcapping and logit dividing
-            if logit_scale_multiply != 0: old_logits = old_logits * logit_scale_multiply
-            if logit_scale_divide   != 0: old_logits = old_logits / logit_scale_divide
-            if logit_softcapping    != 0: old_logits = old_logits * torch.tanh(old_logits / logit_softcapping)
-
-            old_logits = old_logits.to(torch.float32)
-            # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
-            if temperature != 1.0: old_logits = old_logits / temperature
             old_x = torch.gather(old_logits, dim = -1, index = input_ids).squeeze(-1)
             old = old_x - torch.logsumexp(old_logits, dim = -1)
-        pass
-    pass
+    new_x = torch.gather(new_logits, dim = -1, index = input_ids).squeeze(-1)
+    new = new_x - torch.logsumexp(new_logits, dim = -1)
 
     # Reverse KL
     # Note that this is a low variance low bias estimator for the KL divergence as used in GRPO paper
@@ -453,11 +349,12 @@ def grpo_compute_loss_slow(
         loss_1 = torch.clamp(coef_1, max=delta) * advantages.unsqueeze(1)
     else:
         loss_1 = coef_1 * advantages.unsqueeze(1)
-    pass
 
+    
     # Must detach - otherwise gradients are not propagated correctly!
     # exp(x - x) == 1
     # loss_i = torch.exp(new - new.detach()) * advantages.unsqueeze(1)
+    
 
     loss_2 = coef_2 * advantages.unsqueeze(1)
     loss_i = -torch.min(loss_1, loss_2)
@@ -706,7 +603,7 @@ class UnslothGRPOConfig(GRPOConfig):
         push_to_hub_organization = None,
         push_to_hub_token = None,
         mp_parameters = '',
-        auto_find_batch_size = True,
+        auto_find_batch_size = False,
         full_determinism = False,
         torchdynamo = None,
         ray_scope = 'last',
@@ -734,7 +631,7 @@ class UnslothGRPOConfig(GRPOConfig):
         vllm_gpu_memory_utilization = 0.9,
         vllm_dtype = 'auto',
         vllm_max_model_len = None,
-        beta = 0.001,
+        beta = 0.04,
         reward_weights = None,
         sync_ref_model = False,
         ref_model_mixup_alpha = 0.9,
@@ -752,11 +649,6 @@ class UnslothGRPOConfig(GRPOConfig):
         if (per_device_train_batch_size // num_generations) * num_generations != per_device_train_batch_size:
             print('Unsloth: We now expect `per_device_train_batch_size` to be a multiple of `num_generations`.\nWe will change the batch size of ' + str(per_device_train_batch_size) + ' to the `num_generations` of ' + str(num_generations))
             per_device_train_batch_size = num_generations
-        
-        if temperature <= 0:
-            raise MathError('Unsloth: Please set a positive non-zero temperature since your results will be wrong.')
-        elif temperature >= 10:
-            raise MathError('Unsloth: Please set a positive non-zero temperature less than 10, since sampling will be quite erratic.')
         
         div = per_device_train_batch_size // num_generations
         if div * num_generations != per_device_train_batch_size:
@@ -956,7 +848,7 @@ class _UnslothGRPOTrainer(Trainer):
                     "Invalid `torch_dtype` passed to `GRPOConfig`. Expected either 'auto' or a string representing "
                     f"a `torch.dtype` (e.g., 'float32'), but got {torch_dtype}."
                 )
-            # Disable caching if gradient checkpointing is enabled [not supported]
+            # Disable caching if gradient checkpointing is enabled (not supported)
             model_init_kwargs["use_cache"] = (
                 False if args.gradient_checkpointing else model_init_kwargs.get("use_cache")
             )
@@ -1041,7 +933,7 @@ class _UnslothGRPOTrainer(Trainer):
 
         self.beta = args.beta
 
-        # The trainer estimates the number of FLOPs [floating-point operations] using the number of elements in the
+        # The trainer estimates the number of FLOPs (floating-point operations) using the number of elements in the
         # input tensor associated with the key "input_ids". However, in GRPO, the sampled data does not include the
         # "input_ids" key. Instead, the available keys is "prompt". As a result, the trainer issues the warning:
         # "Could not estimate the number of tokens of the input, floating-point operations will not be computed." To
@@ -1147,8 +1039,8 @@ class _UnslothGRPOTrainer(Trainer):
         return RepeatRandomSampler(eval_dataset, self.num_generations, seed=self.args.seed)
 
     # Get the per-token log probabilities for the completions for the model and the reference model
-    def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep):
-        if True: # os.environ.get('UNSLOTH_USE_NEW_MODEL', '0') == '0':
+    def _get_per_token_logps(self, model, input_ids, attention_mask, logits_to_keep, calc_logprob_flag = None):
+        if os.environ.get('UNSLOTH_USE_NEW_MODEL', '0') == '0' and  not calc_logprob_flag:
             return None # Unsloth efficient GRPO
         # Otherwise, calculate normally:
         if not hasattr(self, '_autocast_dtype'):
@@ -1156,22 +1048,16 @@ class _UnslothGRPOTrainer(Trainer):
             if os.environ.get('UNSLOTH_FORCE_FLOAT32', '0') == '1': self._autocast_dtype = torch.float16
 
         os.environ["UNSLOTH_RETURN_HIDDEN_STATES"] = "1"
-        with torch.amp.autocast(device_type = DEVICE_TYPE, dtype = self._autocast_dtype):
+        with torch.amp.autocast(device_type = 'cuda', dtype = self._autocast_dtype):
             # We add 1 to `logits_to_keep` because the last logits of the sequence is later excluded
-            logits = model(
-                input_ids = input_ids,
-                attention_mask = attention_mask,
-                logits_to_keep = logits_to_keep + 1,
-            ).logits
-            # logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
-            return logits
+            hidden_states = model(input_ids=input_ids, attention_mask=attention_mask, logits_to_keep=logits_to_keep + 1).logits
+            #logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
+            return hidden_states
             # input_ids = input_ids[:, -logits_to_keep:]
             # For transformers<=4.48, logits_to_keep argument isn't supported, so here we drop logits ourselves.
             # See https://github.com/huggingface/trl/issues/2770
             # logits = logits[:, -logits_to_keep:]
             # return logits
-            # See https://huggingface.co/blog/the_n_implementation_details_of_rlhf_with_ppo#policy-training-implementation-details
-            # logits = logits / self.temperature
             # logps = selective_log_softmax(logits, input_ids)
 
             # row_indices, col_indices = torch.where(logps < -20)
@@ -1348,9 +1234,6 @@ class _UnslothGRPOTrainer(Trainer):
             if wandb.run is not None and self.accelerator.is_main_process:
                 wandb.log({"completions": wandb.Table(dataframe=df)})
 
-        if hasattr(self, 'llm'):
-            if getattr(self.llm.llm_engine.vllm_config.model_config, 'enable_sleep_mode', False):
-                self.llm.sleep(os.environ.get('VLLM_SLEEP_MODE', 1))
         return {
             "prompt_ids": prompt_ids,
             "prompt_mask": prompt_mask,
@@ -1374,106 +1257,60 @@ class _UnslothGRPOTrainer(Trainer):
         logits_to_keep = completion_ids.size(1)  # we only need to compute the logits for the completion tokens
         _input_ids = input_ids
         _logits_to_keep = logits_to_keep
-
-        get_logps_func = \
-            lambda model, input_ids, attention_mask, logits_to_keep, batch_size=None, compute_entropy=False: \
-            self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep) \
-            if hasattr(self, "_get_per_token_logps") else \
-            self._get_per_token_logps_and_entropies(model, input_ids, attention_mask, logits_to_keep, batch_size, compute_entropy)['logps']
-
-        per_token_logps = get_logps_func(model, input_ids, attention_mask, logits_to_keep)
+        
+        per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
 
         # Compute the KL divergence between the model and the reference model
         # _prepare_inputs doesn't return reference log probs anymore. We need to calculate it ourselves.
         # https://github.com/huggingface/trl/blob/05bc43e960396581e458195b8388efe6b82cae1f/trl/trainer/grpo_trainer.py#L1328
         if self.beta != 0.0:
             with torch.inference_mode(), model.disable_adapter():
-                ref_per_token_logps = per_token_logps = get_logps_func(model, input_ids, attention_mask, logits_to_keep)
+                ref_per_token_logps = self._get_per_token_logps(model, input_ids, attention_mask, logits_to_keep)
         else:
             ref_per_token_logps = None
         # per_token_kl = torch.exp(ref_per_token_logps - per_token_logps) - (ref_per_token_logps - per_token_logps) - 1
+
         # x - x.detach() allows for preserving gradients from x
         advantages = inputs["advantages"]
         # per_token_loss = torch.exp(per_token_logps - per_token_logps.detach()) * advantages.unsqueeze(1)
         # per_token_loss = -(per_token_loss - self.beta * per_token_kl)
         # loss = ((per_token_loss * completion_mask).sum(dim=1) / completion_mask.sum(dim=1)).mean()
-        old_hidden_states = inputs.get("old_per_token_logps", None)
+        if "old_per_token_logps" in inputs.keys():
+            old_hidden_states = inputs["old_per_token_logps"]
+        else: 
+            old_hidden_states = None
         input_ids = input_ids[:, -logits_to_keep:]
-
-        # Get logit softcapping and logit scale
-        logit_softcapping = getattr(model.config, "final_logit_softcapping", 0) # Gemma
-        if logit_softcapping is None: logit_softcapping = 0
-        logit_scale_multiply = getattr(model.config, "logit_scale", 0) # Cohere
-        if logit_scale_multiply is None: logit_scale_multiply = 0
-        logit_scale_divide = getattr(model.config, "logits_scaling", 0) # Granite
-        if logit_scale_divide is None: logit_scale_divide = 0
         if per_token_logps is not None:
-
-            if ref_per_token_logps is not None:
-                ref_per_token_logps = ref_per_token_logps[:, :-1, :] # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
-            per_token_logps = per_token_logps[:, :-1, :] # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
-
             loss, completion_length, mean_kl = grpo_compute_loss_slow(
-                ref_per_token_logps,
-                per_token_logps,
-                old_hidden_states,
-                input_ids,
-                completion_mask,
-                self.beta,
-                advantages,
+                ref_per_token_logps, per_token_logps, old_hidden_states, input_ids, completion_mask, self.beta, advantages, 
                 loss_type = self.args.loss_type,
-                epsilon_low = self.epsilon_low,
-                epsilon_high = self.epsilon_high,
+                epsilon_low = self.epsilon_low, epsilon_high = self.epsilon_high,
                 max_completion_length = self.args.max_completion_length,
                 delta = self.args.delta,
-                temperature = self.args.temperature,
-                logit_softcapping = logit_softcapping,
-                logit_scale_multiply = logit_scale_multiply,
-                logit_scale_divide = logit_scale_divide,
             )
         else:
             if hasattr(self.args, "loss_type"):
                 loss, completion_length, mean_kl = grpo_accumulated_loss(
-                    trainer = self,
-                    input_ids = _input_ids,
-                    logits_to_keep = logits_to_keep,
-                    completion_mask = completion_mask,
-                    advantages = advantages,
-                    old_hidden_states = old_hidden_states,
+                    self, _input_ids, logits_to_keep, completion_mask, advantages, old_hidden_states,
                     n_chunks = self.args.unsloth_num_chunks,
                     loss_type = self.args.loss_type,
-                    epsilon_low = self.epsilon_low,
-                    epsilon_high = self.epsilon_high,
+                    epsilon_low = self.epsilon_low, epsilon_high = self.epsilon_high,
                     max_completion_length = self.args.max_completion_length,
                     delta = self.args.delta,
-                    temperature = self.args.temperature,
-                    logit_softcapping = logit_softcapping,
-                    logit_scale_multiply = logit_scale_multiply,
-                    logit_scale_divide = logit_scale_divide,
-                    attention_mask = attention_mask,
                 )
             else:
                 # to ensure backwards compatibility with trl 0.15.2 and maybe even 0.17
                 loss, completion_length, mean_kl = grpo_accumulated_loss(
-                    trainer = self,
-                    input_ids = _input_ids,
-                    logits_to_keep = logits_to_keep,
-                    completion_mask = completion_mask,
-                    advantages = advantages,
-                    old_hidden_states = old_hidden_states,
+                    self, _input_ids, logits_to_keep, completion_mask, advantages, old_hidden_states,
                     n_chunks = self.args.unsloth_num_chunks,
-                    temperature = self.args.temperature,
-                    logit_softcapping = logit_softcapping,
-                    logit_scale_multiply = logit_scale_multiply,
-                    logit_scale_divide = logit_scale_divide,
-                    attention_mask = attention_mask,
-                )
-            pass
-        pass
+                )    
+
         # Log the metrics
         # completion_length = self.accelerator.gather_for_metrics(completion_mask.sum(1)).float().mean().item()
+
         # mean_kl = ((per_token_kl * completion_mask).sum(dim=1) / completion_mask.sum(dim=1)).mean()
         # self._metrics["kl"].append(self.accelerator.gather_for_metrics(mean_kl).mean().item())
+
         if "train" in self._metrics:
             mode = "eval" if self.control.should_evaluate else "train"
             self._metrics[mode]["completion_length"].append(completion_length.item())
@@ -1668,9 +1505,7 @@ class UnslothGRPOTrainer(_UnslothGRPOTrainer):
     ):
         if args is None: args = UnslothGRPOConfig()
         use_bf16 = getattr(args, 'bf16', False)
-        if type(use_bf16) is not bool: use_bf16 = False
         use_fp16 = getattr(args, 'fp16', False)
-        if type(use_fp16) is not bool: use_fp16 = False
         force_float32 = False
         if os.environ.get('UNSLOTH_FORCE_FLOAT32', '0') == '1':
             print('Unsloth: Switching to float32 training since model cannot work with float16')
@@ -1705,9 +1540,7 @@ class UnslothGRPOTrainer(_UnslothGRPOTrainer):
             if eval_bsz == 8 and args.per_device_train_batch_size < eval_bsz: args.per_device_eval_batch_size = args.per_device_train_batch_size
             if getattr(args, 'eval_accumulation_steps', None) is None and ga_steps is not None: args.eval_accumulation_steps = ga_steps
         fp16_full_eval = getattr(args, 'fp16_full_eval', False)
-        if type(fp16_full_eval) is not bool: fp16_full_eval = False
         bf16_full_eval = getattr(args, 'bf16_full_eval', False)
-        if type(bf16_full_eval) is not bool: bf16_full_eval = False
         if args.fp16 and bf16_full_eval: args.bf16_full_eval = False; args.fp16_full_eval = True
         if args.bf16 and fp16_full_eval: args.bf16_full_eval = True; args.fp16_full_eval = False
         if force_float32:

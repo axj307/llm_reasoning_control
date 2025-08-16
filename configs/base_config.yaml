@@ -4,7 +4,7 @@
 # Model Configuration
 model:
   base_model_name: "unsloth/Qwen3-4B-Base"
-  max_seq_length: 1024  # Can increase for longer reasoning traces
+  max_seq_length: 2048  # Increased for longer reasoning traces and GRPO compatibility
   lora_rank: 8  # Larger rank = smarter, but slower
   load_in_4bit: true
   fast_inference: true  # Enable vLLM fast inference
@@ -46,7 +46,7 @@ eval:
     figsize: [12, 10]
     dpi: 300
     save_plots: true
-    plot_directory: "plots"
+    plot_directory: "figures"
 
 # Path Configuration
 paths:

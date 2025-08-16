@@ -66,13 +66,28 @@ class DoubleIntegrator(BaseEnvironment):
     
     def get_system_prompt(self, reasoning_start: str, reasoning_end: str,
                          solution_start: str, solution_end: str) -> str:
-        """Get system-specific prompt for the LLM."""
+        """Get system-specific prompt for the LLM - matches working notebook exactly."""
         return f"""You are a control systems expert.
 Given a double integrator system (ẍ = u) with initial position and velocity,
 generate a sequence of {self.steps} control inputs to reach the origin (0,0) in exactly {self.total_time:.2f} seconds.
 Position and velocity must stay within [-1, 1], and control inputs must be within [-3, 3].
 Explain your approach between {reasoning_start} and {reasoning_end}.
 Then provide exactly {self.steps} control values as a comma-separated list between {solution_start} and {solution_end}."""
+    
+    @staticmethod
+    def get_system_prompt_dynamic(current_dt: float, current_steps: int,
+                                 reasoning_start: str = "<REASONING>", 
+                                 reasoning_end: str = "</REASONING>",
+                                 solution_start: str = "<CONTROLS>", 
+                                 solution_end: str = "</CONTROLS>") -> str:
+        """Dynamic system prompt generation matching working notebook."""
+        total_time = current_dt * current_steps
+        return f"""You are a control systems expert.
+Given a double integrator system (ẍ = u) with initial position and velocity,
+generate a sequence of {current_steps} control inputs to reach the origin (0,0) in exactly {total_time:.2f} seconds.
+Position and velocity must stay within [-1, 1], and control inputs must be within [-3, 3].
+Explain your approach between {reasoning_start} and {reasoning_end}.
+Then provide exactly {current_steps} control values as a comma-separated list between {solution_start} and {solution_end}."""
     
     def get_state_names(self) -> List[str]:
         """Return names of state variables."""

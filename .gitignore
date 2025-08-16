@@ -126,6 +126,7 @@ secrets.yaml
 *.err
 slurm-*.out
 job_*.sh
+slurm_output_*/
 
 # Backup files
 *.bak
@@ -252,3 +253,12 @@ notebooks/test_*.ipynb
 # Ignore specific large model directories
 unsloth_model/
 base_models/
+
+
+checkpoints/
+checkpoint*
+control-format-model/
+*_lora/
+
+unsloth_compiled_cache/
+unsloth_compiled_cache_*

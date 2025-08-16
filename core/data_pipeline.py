@@ -5,7 +5,22 @@ import random
 import pickle
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
-from datasets import Dataset
+try:
+    from datasets import Dataset
+except ImportError:
+    try:
+        import datasets
+        Dataset = datasets.Dataset
+    except:
+        # Fallback - create a simple Dataset class if needed
+        class Dataset:
+            @staticmethod
+            def from_dict(data):
+                return data
+            
+            @staticmethod
+            def from_list(data):
+                return data
 
 from environments import get_system, list_systems
 from .solvers import get_solver
@@ -60,15 +75,7 @@ class UniversalDataGenerator:
             )
             
             # Solve for optimal control
-            if system_name == "double_integrator":
-                x0, v0 = initial_state
-                controls = solver(x0, v0, self.dt, self.steps)
-            elif system_name == "van_der_pol":
-                x0, v0 = initial_state
-                controls = solver(x0, v0, 1.0, self.dt, self.steps)  # mu=1.0
-            else:
-                # Generic solver interface for future systems
-                controls = solver(initial_state, self.dt, self.steps)
+            controls = solver(initial_state, self.dt, self.steps)
             
             # Generate reasoning text
             reasoning = self._generate_reasoning(system_name, initial_state, controls)
@@ -80,7 +87,7 @@ class UniversalDataGenerator:
             complete_output = (f"{self.reasoning_start}{reasoning}{self.reasoning_end}"
                              f"{self.solution_start}{control_str}{self.solution_end}")
             
-            # Create data entry
+            # Create data entry - match working notebook format exactly
             data_entry = {
                 "system_type": system_name,
                 "initial_state": initial_state.tolist(),
@@ -89,7 +96,12 @@ class UniversalDataGenerator:
                 "problem": problem,
                 "reasoning": reasoning,
                 "complete_output": complete_output,
-                "messages": [
+                "prompt": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": problem}
+                ],
+                "answer": control_str,  # GRPO expects this field
+                "Messages": [  # Working notebook has capital M
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": problem},
                     {"role": "assistant", "content": complete_output}

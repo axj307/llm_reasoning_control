@@ -6,10 +6,10 @@ import scipy.optimize as opt
 from typing import List, Optional, Callable
 
 
-def solve_van_der_pol_optimal(x0: float, v0: float, mu: float = 1.0, 
-                             dt: float = 0.1, steps: int = 50,
-                             Q: Optional[np.ndarray] = None,
-                             R: Optional[float] = None) -> List[float]:
+def solve_van_der_pol_optimal_core(x0: float, v0: float, mu: float = 1.0, 
+                                  dt: float = 0.1, steps: int = 50,
+                                  Q: Optional[np.ndarray] = None,
+                                  R: Optional[float] = None) -> List[float]:
     """
     Compute control sequence for the Van der Pol oscillator using numerical optimization.
     
@@ -43,7 +43,7 @@ def solve_van_der_pol_optimal(x0: float, v0: float, mu: float = 1.0,
     def cost_function(u_sequence):
         """Compute total cost for a control sequence."""
         # Initialize state
-        state = [x0, v0]
+        state = np.array([x0, v0])
         states = [state.copy()]
         total_cost = 0
         
@@ -188,3 +188,31 @@ def analyze_van_der_pol_stability(mu: float = 1.0):
     }
     
     return info
+
+
+def solve_van_der_pol_optimal(initial_state, dt: float, steps: int,
+                              Q: Optional[np.ndarray] = None, 
+                              R: Optional[float] = None) -> List[float]:
+    """
+    Wrapper function to match the expected data pipeline interface.
+    
+    Args:
+        initial_state: Initial state [x0, v0] as list/array
+        dt: Time step
+        steps: Number of control steps
+        Q: State cost matrix (2x2), default: diag([10.0, 5.0])
+        R: Control cost scalar, default: 0.1
+        
+    Returns:
+        List of control inputs
+    """
+    # Extract x0, v0 from initial_state
+    if isinstance(initial_state, (list, tuple)):
+        x0, v0 = initial_state[0], initial_state[1]
+    elif isinstance(initial_state, np.ndarray):
+        x0, v0 = float(initial_state[0]), float(initial_state[1])
+    else:
+        raise ValueError("initial_state must be a list/array with [x0, v0]")
+    
+    # Call the core function
+    return solve_van_der_pol_optimal_core(x0, v0, mu=1.0, dt=dt, steps=steps, Q=Q, R=R)

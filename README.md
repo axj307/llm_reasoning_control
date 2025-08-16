@@ -89,11 +89,21 @@ This creates simple, clean datasets:
 Use your clean datasets for any training combination:
 
 ```bash
-# Train DI specialist model
+# Train DI specialist model (full dataset)
 python scripts/train_single_system.py \
     --system double_integrator \
     --dataset-name di \
     --training-type both \
+    --lora-rank 8
+
+# Train DI specialist with dataset size limits
+python scripts/train_single_system.py \
+    --system double_integrator \
+    --dataset-name di \
+    --training-type both \
+    --sft-max-samples 500 \
+    --grpo-max-samples 100 \
+    --eval-max-samples 5 \
     --lora-rank 8
 
 # Train VDP specialist model  
@@ -606,5 +616,130 @@ print(f"Model trained on: {metadata.get('trained_systems', [])}")
 - ✅ Cross-evaluate any model on any dataset
 - ✅ Super simple naming, no confusion
 - ✅ Focus on LLM training, not data generation
+
+## 🚀 SLURM Cluster Usage (HPC Training)
+
+For training on HPC clusters using SLURM, this framework provides 4 focused, automated end-to-end job scripts that handle training, evaluation, and plot generation.
+
+### 🎯 Core SLURM Scripts
+
+Each SLURM script automatically does: **Training → Evaluation → Plot Generation → Summary Report**
+
+#### 1. SFT Training + Evaluation:
+```bash
+# Default: Double Integrator with full dataset
+sbatch slurm/train_evaluate_sft.sbatch
+
+# Van der Pol with full dataset  
+sbatch --export=SYSTEM=van_der_pol slurm/train_evaluate_sft.sbatch
+
+# With dataset size limits (500 train, 5 eval)
+sbatch --export=SFT_MAX_SAMPLES=500,EVAL_MAX_SAMPLES=5 slurm/train_evaluate_sft.sbatch
+```
+
+#### 2. SFT + GRPO Training + Evaluation:
+```bash
+# Default: Double Integrator with full dataset
+sbatch slurm/train_evaluate_grpo.sbatch
+
+# Van der Pol with full dataset
+sbatch --export=ENVIRONMENT=van_der_pol slurm/train_evaluate_grpo.sbatch
+
+# With dataset size limits (500 SFT, 100 GRPO, 5 eval)
+sbatch --export=SFT_MAX_SAMPLES=500,GRPO_MAX_SAMPLES=100,EVAL_MAX_SAMPLES=5 slurm/train_evaluate_grpo.sbatch
+```
+
+#### 3. Universal Model Training:
+```bash
+sbatch slurm/train_evaluate_universal.sbatch
+```
+
+#### 4. Evaluate Existing Models:
+```bash
+sbatch --export=MODEL_PATH=models/single_system/double_integrator/grpo/latest slurm/evaluate_existing_model.sbatch
+```
+
+### 📊 What Each SLURM Job Produces
+
+After job completion, you automatically get:
+
+```
+figures/job_XXXXX/         # All plots, summaries, and results
+models/single_system/      # Trained models
+logs/                      # SLURM output logs
+```
+
+**Plot Files Generated:**
+- `trajectory_plot.png` - Trajectory visualization
+- `phase_portrait.png` - Phase space plot  
+- `control_input.png` - Control signals
+- For GRPO jobs: separate plots for SFT and GRPO models
+
+### 🔍 Monitoring SLURM Jobs
+
+```bash
+squeue -u $USER              # Check your running jobs
+cat logs/sft_eval_XXXXX.out  # Check job output  
+cat logs/sft_eval_XXXXX.err  # Check job errors
+```
+
+### 📋 SLURM Quick Reference
+
+| What You Want | Command |
+|---------------|---------|
+| DI + SFT (full dataset) | `sbatch slurm/train_evaluate_sft.sbatch` |
+| DI + SFT (limited) | `sbatch --export=SFT_MAX_SAMPLES=500,EVAL_MAX_SAMPLES=5 slurm/train_evaluate_sft.sbatch` |
+| DI + SFT+GRPO (full dataset) | `sbatch slurm/train_evaluate_grpo.sbatch` |
+| DI + SFT+GRPO (limited) | `sbatch --export=SFT_MAX_SAMPLES=500,GRPO_MAX_SAMPLES=100,EVAL_MAX_SAMPLES=5 slurm/train_evaluate_grpo.sbatch` |
+| VDP + SFT | `sbatch --export=SYSTEM=van_der_pol slurm/train_evaluate_sft.sbatch` |
+| VDP + SFT+GRPO | `sbatch --export=ENVIRONMENT=van_der_pol slurm/train_evaluate_grpo.sbatch` |
+| Universal Model | `sbatch slurm/train_evaluate_universal.sbatch` |
+| Evaluate Existing | `sbatch --export=MODEL_PATH=path/to/model slurm/evaluate_existing_model.sbatch` |
+
+### 🎛️ Dataset Size Control
+
+Control exactly how much data to use for training and evaluation:
+
+```bash
+# SFT with custom dataset sizes
+sbatch --export=SFT_MAX_SAMPLES=500,EVAL_MAX_SAMPLES=5 slurm/train_evaluate_sft.sbatch
+
+# SFT+GRPO with different limits for each phase
+sbatch --export=SFT_MAX_SAMPLES=500,GRPO_MAX_SAMPLES=100,EVAL_MAX_SAMPLES=5 slurm/train_evaluate_grpo.sbatch
+
+# Combine with other options
+sbatch --export=SYSTEM=van_der_pol,SFT_MAX_SAMPLES=300,LORA_RANK=16 slurm/train_evaluate_sft.sbatch
+```
+
+### 🎛️ Other Advanced Options
+
+```bash
+# Custom LoRA rank
+sbatch --export=LORA_RANK=16 slurm/train_evaluate_sft.sbatch
+
+# More test cases for evaluation  
+sbatch --export=NUM_TEST_CASES=50 slurm/train_evaluate_grpo.sbatch
+
+# Custom run name
+sbatch --export=RUN_NAME=my_experiment slurm/train_evaluate_sft.sbatch
+```
+
+### 📁 Clean SLURM File Structure
+
+```
+slurm/
+├── train_evaluate_sft.sbatch      # SFT training + evaluation (with dataset size control)
+├── train_evaluate_grpo.sbatch     # SFT+GRPO training + evaluation (with dataset size control)
+├── train_evaluate_universal.sbatch # Universal model training
+└── evaluate_existing_model.sbatch  # Evaluation only for existing models
+```
+
+**Key Features:**
+- ✅ 4 focused scripts (removed 5+ redundant wrapper scripts)
+- ✅ Built-in dataset size control (`SFT_MAX_SAMPLES`, `GRPO_MAX_SAMPLES`, `EVAL_MAX_SAMPLES`)
+- ✅ Automatic training → evaluation → plotting → summary pipeline
+- ✅ Direct `sbatch` usage (no wrapper scripts needed)
+
+---
 
 Happy controlling! 🎛️🤖

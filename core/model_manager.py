@@ -27,10 +27,19 @@ class ModelManager:
     
     def setup_model(self, max_seq_length: int = 1024, lora_rank: int = 8,
                    load_in_4bit: bool = True, gpu_memory_utilization: float = 0.4,
-                   gpu_id: Optional[int] = None, auto_select_gpu: bool = True):
+                   gpu_id: Optional[int] = None, auto_select_gpu: bool = True,
+                   fast_inference: bool = False, working_notebook_mode: bool = False):
         """Set up the base model with LoRA and automatic GPU selection."""
         self.max_seq_length = max_seq_length
         self.lora_rank = lora_rank
+        
+        # Working notebook mode uses different parameters
+        if working_notebook_mode:
+            max_seq_length = 2048  # Higher seq length
+            lora_rank = 32  # Higher LoRA rank
+            gpu_memory_utilization = 0.7  # Higher GPU utilization
+            fast_inference = True  # Enable vLLM
+            print("🚀 Using working notebook mode (vLLM enabled, higher parameters)")
         
         # Auto-select GPU if not specified
         if auto_select_gpu and gpu_id is None:
@@ -48,28 +57,36 @@ class ModelManager:
         print(f"   LoRA rank: {lora_rank}")
         print(f"   GPU memory utilization: {gpu_memory_utilization}")
         
-        # Load base model with your specific configuration
-        self.model, self.tokenizer = FastLanguageModel.from_pretrained(
-            model_name=self.base_model_name,
-            max_seq_length=max_seq_length,
-            load_in_4bit=load_in_4bit,
-            fast_inference=True,  # Enable vLLM fast inference
-            max_lora_rank=lora_rank,
-            gpu_memory_utilization=gpu_memory_utilization,
-        )
+        # Load base model with configuration matching working notebook
+        model_kwargs = {
+            "model_name": self.base_model_name,
+            "max_seq_length": max_seq_length,
+            "load_in_4bit": load_in_4bit,
+            "fast_inference": fast_inference,  # Use parameter from working notebook
+            "max_lora_rank": lora_rank,
+        }
+        
+        # Add gpu_memory_utilization only if fast_inference is True (vLLM mode)
+        if fast_inference:
+            model_kwargs["gpu_memory_utilization"] = gpu_memory_utilization
+            print(f"   Fast inference: {fast_inference} (vLLM enabled)")
+        else:
+            print(f"   Fast inference: {fast_inference} (standard mode)")
+        
+        self.model, self.tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
         
         print("🔧 Applying LoRA configuration...")
         
-        # Apply LoRA with your specific configuration
+        # Apply LoRA with configuration matching working notebook
         self.model = FastLanguageModel.get_peft_model(
             self.model,
-            r=lora_rank,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+            r=lora_rank,
             target_modules=[
                 "q_proj", "k_proj", "v_proj", "o_proj",
                 "gate_proj", "up_proj", "down_proj",
             ],
-            lora_alpha=lora_rank * 2,  # *2 speeds up training
-            use_gradient_checkpointing="unsloth",  # Reduces memory usage
+            lora_alpha=lora_rank * 2,
+            use_gradient_checkpointing="unsloth",
             random_state=3407,
         )
         
@@ -101,11 +118,10 @@ class ModelManager:
             "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
             "{% endif %}"
 
-        # Replace with specific values
-        chat_template = chat_template\
+        # Replace with our specific template:
+        chat_template = chat_template \
             .replace("'{system_prompt}'", f"'{system_prompt}'")\
             .replace("'{reasoning_start}'", f"'{reasoning_start}'")
-        
         self.tokenizer.chat_template = chat_template
     
     def save_checkpoint(self, save_dir: str, metadata: Optional[Dict] = None):
@@ -113,9 +129,9 @@ class ModelManager:
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
         
-        # Save LoRA weights
+        # Save LoRA weights using PEFT's save_pretrained method
         checkpoint_path = save_path / "checkpoint"
-        self.model.save_lora(str(checkpoint_path))
+        self.model.save_pretrained(str(checkpoint_path))
         
         # Prepare metadata
         default_metadata = {
@@ -151,12 +167,21 @@ class ModelManager:
                 lora_rank=metadata.get('lora_rank', 16)
             )
         
-        # Load LoRA weights
-        lora_path = load_path / "checkpoint"
-        lora_request = self.model.load_lora(str(lora_path))
+        # Load LoRA weights using PEFT's from_pretrained method
+        # Check if adapter files are directly in the directory or in a checkpoint subdirectory
+        if (load_path / "adapter_config.json").exists():
+            lora_path = load_path
+        else:
+            lora_path = load_path / "checkpoint"
+        
+        # Import PeftModel for loading adapters
+        from peft import PeftModel
+        
+        # Load the LoRA adapter onto the base model
+        self.model = PeftModel.from_pretrained(self.model, str(lora_path))
         
         print(f"Model loaded from {load_dir}")
-        return self.model, self.tokenizer, lora_request, metadata
+        return self.model, self.tokenizer, None, metadata
 
 
 class UniversalModelManager(ModelManager):
@@ -188,8 +213,8 @@ class UniversalModelManager(ModelManager):
         # Construct save directory
         save_dir = f"models/universal/{training_type}/{run_name}"
         
-        # Import systems to get their info
-        from systems import get_system
+        # Import environments to get their info
+        from environments import get_system
         
         # Prepare metadata
         metadata = {
@@ -229,8 +254,8 @@ class UniversalModelManager(ModelManager):
         # Construct save directory
         save_dir = f"models/single_system/{system_name}/{training_type}/{run_name}"
         
-        # Import systems to get info
-        from systems import get_system
+        # Import environments to get info
+        from environments import get_system
         
         # Prepare metadata
         metadata = {

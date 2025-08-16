@@ -1,8 +1,9 @@
+
 """Evaluation metrics for control trajectories."""
 
 import numpy as np
 from typing import Dict, List, Any, Tuple, Optional
-
+import re
 
 def evaluate_trajectory(trajectory: Dict[str, Any], 
                        target_state: Optional[np.ndarray] = None) -> Dict[str, float]:
@@ -265,3 +266,122 @@ def rank_performance(results: List[Dict[str, Any]],
     rankings.sort(key=lambda x: x[1], reverse=True)
     
     return rankings
+
+def get_reward_functions(reasoning_end, solution_start, solution_end, tokenizer):
+    # Define regex pattern to match control sequence
+    solution_end_regex = r"""</CONTROLS>[\s]{0,}""" + \
+        """(?:""" + re.escape(tokenizer.eos_token) + """)?"""
+
+    match_format = re.compile(
+        rf"""{reasoning_end}.*?"""\
+        rf"""{solution_start}(.+?){solution_end_regex}"""\
+        rf"""[\s]{{0,}}$""",
+        flags = re.MULTILINE | re.DOTALL
+    )
+
+    def match_format_exactly(completions, **kwargs):
+        scores = []
+        for completion in completions:
+            score = 0
+            response = completion[0]["content"]
+            if match_format.search(response) is not None: score += 3.0
+            scores.append(score)
+        return scores
+
+    def match_format_approximately(completions, **kwargs):
+        scores = []
+        for completion in completions:
+            score = 0
+            response = completion[0]["content"]
+            score += 0.5 if response.count(reasoning_end) == 1 else -1.0
+            score += 0.5 if response.count(solution_start) == 1 else -1.0
+            score += 0.5 if response.count(solution_end) == 1 else -1.0
+            scores.append(score)
+        return scores
+
+    def evaluate_control_sequence(prompts, completions, answer, **kwargs):
+        """Enhanced evaluation of control sequences with LQR characteristics."""
+        scores = []
+        
+        for completion, true_answer in zip(completions, answer):
+            score = 0
+            response = completion[0]["content"]
+            
+            # Extract control sequence (keeping existing code)
+            control_match = re.search(rf"""{solution_start}(.*?){solution_end}""", response, re.DOTALL)
+            if control_match is None:
+                scores.append(-2.0)  # Penalize for not following format
+                continue
+                
+            try:
+                # Parse control values
+                control_text = control_match.group(1).strip()
+                control_values = [float(x.strip()) for x in control_text.split(',')]
+                
+                # Check existing constraints
+                if len(control_values) == steps:
+                    score += 1.0
+                else:
+                    score -= 1.0
+                    
+                if all(-3 <= u <= 3 for u in control_values):
+                    score += 1.0
+                else:
+                    score -= 2.0
+                
+                # # NEW: Check for overly sparse controls (penalize many zero controls)
+                # zero_count = sum(1 for u in control_values if abs(u) < 0.01)
+                # if zero_count > 7:  # If more than 7 out of 10 controls are zero
+                #     score -= 2.0
+                
+                # NEW: Check for characteristic LQR smoothness
+                # LQR typically produces smooth control sequences
+                if len(control_values) > 1:
+                    diffs = [abs(control_values[i] - control_values[i-1]) for i in range(1, len(control_values))]
+                    if max(diffs) < 1.5:  # Smooth control changes
+                        score += 1.5
+                        
+                # Simulate system
+                problem_text = prompts[0][-1]["content"]
+                initial_match = re.search(r"""position=([-\\d\\.]+), velocity=([-\\d\\.]+)""", problem_text)
+                if initial_match:
+                    x0 = float(initial_match.group(1))
+                    v0 = float(initial_match.group(2))
+                    
+                    # Simulate system with generated controls
+                    x = x0
+                    v = v0
+                    valid_trajectory = True
+                    
+                    for u in control_values:
+                        v = v + u * dt
+                        x = x + v * dt
+                        
+                        if not (-1 <= x <= 1 and -1 <= v <= 1):
+                            valid_trajectory = False
+                            break
+                    
+                    # Reward valid trajectory
+                    if valid_trajectory:
+                        score += 1.0
+                    else:
+                        score -= 1.0
+                    
+                    # Reward based on final error
+                    final_error = np.sqrt(x**2 + v**2)
+                    if final_error < 0.1:
+                        score += 3.0
+                    elif final_error < 0.2:
+                        score += 2.0
+                    elif final_error < 0.5:
+                        score += 1.0
+                    else:
+                        score -= 1.0
+                
+                scores.append(score)
+                
+            except Exception as e:
+                scores.append(-2.0)
+                
+        return scores
+    return [match_format_exactly, match_format_approximately, evaluate_control_sequence]

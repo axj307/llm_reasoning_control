@@ -1,6 +1,7 @@
 """Inference utilities for control models."""
 
 import re
+import torch
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from vllm import SamplingParams
@@ -104,12 +105,40 @@ def run_inference(model, tokenizer, system_name: str,
             include_stop_str_in_output=True,
         )
     
-    # Run inference
-    output = model.fast_generate(
-        text,
-        sampling_params=sampling_params,
-        lora_request=lora_request,
-    )[0].outputs[0].text
+    # Run inference - detect model type and use appropriate method
+    if hasattr(model, 'fast_generate') and not hasattr(model, 'llm_engine'):
+        # Unsloth model - use standard transformers generation
+        generation_kwargs = {
+            "max_new_tokens": getattr(sampling_params, 'max_tokens', 1024) if sampling_params else 1024,
+            "temperature": getattr(sampling_params, 'temperature', 0.7) if sampling_params else 0.7,
+            "top_k": getattr(sampling_params, 'top_k', 50) if sampling_params else 50,
+            "do_sample": True,
+            "pad_token_id": tokenizer.eos_token_id,
+        }
+        
+        # Tokenize input
+        inputs = tokenizer(text, return_tensors="pt", add_special_tokens=False)
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        
+        # Generate using standard transformers
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                **generation_kwargs
+            )
+        
+        # Decode only the new tokens
+        output = tokenizer.decode(
+            outputs[0][inputs["input_ids"].shape[1]:], 
+            skip_special_tokens=True
+        )
+    else:
+        # vLLM model - use fast_generate with sampling_params
+        output = model.fast_generate(
+            text,
+            sampling_params=sampling_params,
+            lora_request=lora_request,
+        )[0].outputs[0].text
     
     # Extract reasoning and controls
     reasoning = extract_reasoning_from_response(output, reasoning_start, reasoning_end)
@@ -155,7 +184,10 @@ def run_batch_inference(model, tokenizer, system_name: str,
     results = []
     
     for i, initial_state in enumerate(initial_states):
-        print(f"Processing {i+1}/{len(initial_states)}: {initial_state}")
+        # Clean display of initial state values
+        x0_clean = f"{float(initial_state[0]):.4f}"
+        x1_clean = f"{float(initial_state[1]):.4f}"
+        print(f"Processing {i+1}/{len(initial_states)}: ({x0_clean}, {x1_clean})")
         result = run_inference(
             model, tokenizer, system_name, initial_state, 
             lora_request=lora_request, **kwargs
