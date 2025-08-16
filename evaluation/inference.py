@@ -147,7 +147,7 @@ def run_inference(model, tokenizer, system_name: str,
     # Get optimal solution for comparison
     solver = get_solver(system_name)
     if system_name == "double_integrator":
-        optimal_controls = solver(initial_state[0], initial_state[1], dt, steps)
+        optimal_controls = solver(initial_state_array, dt, steps)
     elif system_name == "van_der_pol":
         optimal_controls = solver(initial_state[0], initial_state[1], 1.0, dt, steps)
     else:

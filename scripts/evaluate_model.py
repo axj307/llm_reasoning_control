@@ -92,16 +92,36 @@ def main():
         trained_systems = metadata.get("trained_systems", AVAILABLE_SYSTEMS)
     else:
         # For single system, parse system name and training type from path
-        # Assuming path format: models/single_system/{system}/{training_type}/latest
         path_parts = Path(args.model_path).parts
+        
+        # Check for standard format: models/single_system/{system}/{training_type}/latest
         if len(path_parts) >= 3 and path_parts[-3] in AVAILABLE_SYSTEMS:
             system_name = path_parts[-3]
             training_type = path_parts[-2]  # sft or grpo
-        else:
-            raise ValueError(f"Could not determine system from path: {args.model_path}")
+            model, tokenizer, lora_request, metadata = manager.load_single_system_model(system_name, training_type=training_type)
+            trained_systems = [system_name]
         
-        model, tokenizer, lora_request, metadata = manager.load_single_system_model(system_name, training_type=training_type)
-        trained_systems = [system_name]
+        # Check for working notebook format: models/working_notebook/{model_name}
+        elif len(path_parts) >= 2 and path_parts[-2] == "working_notebook":
+            # For working notebook models, determine system from --systems argument or default to double_integrator
+            if args.systems:
+                system_name = args.systems.split(',')[0].strip()
+            else:
+                system_name = "double_integrator"  # Default for working notebook models
+            
+            # Load as single system model but with custom path
+            from core.model_manager import load_model_from_path
+            model, tokenizer, lora_request = load_model_from_path(args.model_path)
+            # Store in manager for chat template setup
+            manager.model = model
+            manager.tokenizer = tokenizer
+            trained_systems = [system_name]
+            
+        else:
+            raise ValueError(f"Could not determine system from path: {args.model_path}. "
+                           f"Expected format: models/single_system/{{system}}/{{type}}/latest "
+                           f"or models/working_notebook/{{model}} (with --systems specified)")
+        
     
     print(f"Loaded model trained on: {', '.join(trained_systems)}")
     

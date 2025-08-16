@@ -373,3 +373,35 @@ class UniversalModelManager(ModelManager):
             metadata = json.load(f)
         
         return metadata
+
+
+def load_model_from_path(model_path: str, base_model_name: str = "unsloth/Qwen3-4B-Base",
+                        max_seq_length: int = 2048, lora_rank: int = 32):
+    """
+    Load a model directly from a path (for working notebook models).
+    
+    Args:
+        model_path: Path to the model directory
+        base_model_name: Base model to load
+        max_seq_length: Maximum sequence length
+        lora_rank: LoRA rank
+        
+    Returns:
+        Tuple of (model, tokenizer, lora_request)
+    """
+    from unsloth import FastLanguageModel
+    from peft import PeftModel
+    
+    # Load base model
+    base_model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=base_model_name,
+        max_seq_length=max_seq_length,
+        load_in_4bit=True,
+        fast_inference=False,  # Standard mode for evaluation
+        max_lora_rank=lora_rank,
+    )
+    
+    # Load LoRA adapter
+    model = PeftModel.from_pretrained(base_model, model_path)
+    
+    return model, tokenizer, None  # No lora_request for PeftModel
