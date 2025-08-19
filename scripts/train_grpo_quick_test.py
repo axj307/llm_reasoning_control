@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Train GRPO model with working notebook parameters.
-Based on successful Qwen3_(4B)-GRPO_control.ipynb approach.
+Quick test GRPO training with only 10 steps for fast validation.
+Based on train_grpo_working_params.py but with minimal steps.
 """
 
 import torch
@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 def main():
-    print("🚀 GRPO TRAINING WITH WORKING NOTEBOOK PARAMETERS")
+    print("🚀 QUICK GRPO TEST (10 STEPS ONLY)")
     print("=" * 60)
     
     # Set seeds for reproducibility
@@ -111,9 +111,9 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     
     print("✅ Chat template configured")
     
-    # Generate dataset using notebook's approach
-    print("📊 Generating control dataset...")
-    control_data = generate_simple_control_dataset(num_samples=500, target_dt=dt, target_steps=steps)
+    # Generate small dataset for quick test
+    print("📊 Generating small control dataset (50 samples)...")
+    control_data = generate_simple_control_dataset(num_samples=50, target_dt=dt, target_steps=steps)
     
     from datasets import Dataset
     control_dataset = Dataset.from_list(control_data)
@@ -129,8 +129,8 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     control_dataset = control_dataset.map(format_for_sft)
     print(f"Dataset created: {len(control_dataset)} samples")
     
-    # Pre fine-tune for formatting (exact from notebook)
-    print("🔧 Pre fine-tuning for format...")
+    # Quick SFT pre-training (1 epoch only)
+    print("🔧 Quick SFT pre-training (1 epoch)...")
     from trl import SFTTrainer, SFTConfig
     
     sft_trainer = SFTTrainer(
@@ -139,34 +139,34 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         train_dataset=control_dataset,
         args=SFTConfig(
             dataset_text_field="text",
-            per_device_train_batch_size=4,  # From notebook
+            per_device_train_batch_size=4,
             gradient_accumulation_steps=1,
-            warmup_steps=5,
-            num_train_epochs=2,
+            warmup_steps=2,  # Reduced
+            num_train_epochs=1,  # Reduced from 2
             learning_rate=2e-4,
             logging_steps=5,
             optim="adamw_8bit",
             weight_decay=0.01,
             lr_scheduler_type="linear",
             seed=3407,
-            report_to="none",  # Disable wandb for now
-            output_dir="./sft_pretraining_output",
-            dataloader_num_workers=0,  # Disable multiprocessing
-            max_seq_length=2048,  # Set max length
+            report_to="none",
+            output_dir="./sft_quick_test_output",
+            dataloader_num_workers=0,
+            max_seq_length=2048,
         ),
     )
     
-    # Run pre-training
+    # Run quick pre-training
     sft_result = sft_trainer.train()
-    print(f"✅ SFT pre-training completed. Loss: {sft_result.training_loss:.4f}")
+    print(f"✅ Quick SFT completed. Loss: {sft_result.training_loss:.4f}")
     
     # Clear cache
     torch.cuda.empty_cache()
     import gc
     gc.collect()
     
-    # GRPO training with exact notebook parameters
-    print("🚀 Starting GRPO training...")
+    # QUICK GRPO training with only 10 steps
+    print("🚀 Starting QUICK GRPO training (10 steps only)...")
     
     max_completion_length = 2048
     
@@ -190,17 +190,17 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         lr_scheduler_type="linear",
         optim="adamw_8bit",
         logging_steps=1,
-        per_device_train_batch_size=1,  # Will be changed to num_generations
+        per_device_train_batch_size=1,
         gradient_accumulation_steps=1,
         num_generations=4,
         max_completion_length=max_completion_length,
-        max_steps=100,
-        save_steps=500,
-        report_to="none",  # Disable wandb for now
-        output_dir="./grpo_working_output",
+        max_steps=10,  # REDUCED FROM 100 TO 10
+        save_steps=20,  # Higher than max_steps to avoid saving
+        report_to="none",
+        output_dir="./grpo_quick_test_output",
     )
     
-    # Setup reward functions (from notebook)
+    # Setup reward functions (simplified)
     import re
     
     # Match format functions (from notebook)
@@ -224,19 +224,8 @@ Then provide exactly {current_steps} control values as a comma-separated list be
             scores.append(score)
         return scores
     
-    def match_format_approximately(completions, **kwargs):
-        scores = []
-        for completion in completions:
-            score = 0
-            response = completion[0]["content"]
-            score += 0.5 if response.count(reasoning_end) == 1 else -1.0
-            score += 0.5 if response.count(solution_start) == 1 else -1.0
-            score += 0.5 if response.count(solution_end) == 1 else -1.0
-            scores.append(score)
-        return scores
-    
     def evaluate_control_sequence(prompts, completions, answer, **kwargs):
-        """Enhanced evaluation from notebook."""
+        """Simplified evaluation for quick test."""
         scores = []
         
         for completion, true_answer in zip(completions, answer):
@@ -253,61 +242,17 @@ Then provide exactly {current_steps} control values as a comma-separated list be
                 control_text = control_match.group(1).strip()
                 control_values = [float(x.strip()) for x in control_text.split(',')]
                 
-                # Basic checks
+                # Basic checks only (simplified)
                 if len(control_values) == steps:
                     score += 1.0
-                else:
-                    score -= 1.0
                     
                 if all(-3 <= u <= 3 for u in control_values):
                     score += 1.0
-                else:
-                    score -= 2.0
-                
-                # LQR smoothness check
-                if len(control_values) > 1:
-                    diffs = [abs(control_values[i] - control_values[i-1]) for i in range(1, len(control_values))]
-                    if max(diffs) < 1.5:
-                        score += 1.5
-                        
-                # Simulate system
-                problem_text = prompts[0][-1]["content"]
-                initial_match = re.search(r"position=([-\d\.]+), velocity=([-\d\.]+)", problem_text)
-                if initial_match:
-                    x0 = float(initial_match.group(1))
-                    v0 = float(initial_match.group(2))
                     
-                    x, v = x0, v0
-                    valid_trajectory = True
-                    
-                    for u in control_values:
-                        v = v + u * dt
-                        x = x + v * dt
-                        
-                        if not (-1 <= x <= 1 and -1 <= v <= 1):
-                            valid_trajectory = False
-                            break
-                    
-                    if valid_trajectory:
-                        score += 1.0
-                    else:
-                        score -= 1.0
-                    
-                    # Final error reward
-                    final_error = np.sqrt(x**2 + v**2)
-                    if final_error < 0.1:
-                        score += 3.0
-                    elif final_error < 0.2:
-                        score += 2.0
-                    elif final_error < 0.5:
-                        score += 1.0
-                    else:
-                        score -= 1.0
-                
                 scores.append(score)
                 
             except Exception as e:
-                scores.append(-2.0)
+                scores.append(-1.0)
                 
         return scores
     
@@ -317,14 +262,13 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         processing_class=tokenizer,
         reward_funcs=[
             match_format_exactly,
-            match_format_approximately,
             evaluate_control_sequence,
         ],
         args=training_args,
         train_dataset=control_dataset,
     )
     
-    print("🚀 Starting GRPO training...")
+    print("🚀 Starting QUICK GRPO training...")
     print(f"   Max steps: {training_args.max_steps}")
     print(f"   Learning rate: {training_args.learning_rate}")
     print(f"   Num generations: {training_args.num_generations}")
@@ -332,57 +276,24 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     # Run GRPO training
     grpo_result = grpo_trainer.train()
     
-    print("✅ GRPO training completed!")
+    print("✅ QUICK GRPO training completed!")
     print(f"   Training loss: {grpo_result.training_loss:.4f}")
     
     # Save the model
-    save_path = "models/working_notebook/grpo_working_params_model"
-    model.save_lora(save_path)
-    print(f"💾 GRPO model saved to: {save_path}")
+    save_path = "models/quick_test/grpo_10steps_model"
+    os.makedirs(save_path, exist_ok=True)
+    model.save_pretrained(save_path)
+    tokenizer.save_pretrained(save_path)
+    print(f"💾 Quick test model saved to: {save_path}")
     
-    # Quick test
-    print("🧪 Testing GRPO model...")
-    test_x0, test_v0 = 0.5, -0.3
-    total_time = dt * steps
-    test_problem = f"Control a double integrator system with initial state [position={test_x0:.2f}, velocity={test_v0:.2f}] to reach the origin (0,0) in {total_time:.2f} seconds using {steps} steps. Ensure all states remain within [-1,1] and controls within [-3,3]."
-    
-    test_messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": test_problem},
-    ]
-    
-    text = tokenizer.apply_chat_template(
-        test_messages,
-        add_generation_prompt=True,
-        tokenize=False,
-    )
-    
-    from vllm import SamplingParams
-    test_sampling_params = SamplingParams(
-        temperature=0.7,
-        top_k=50,
-        max_tokens=1024,
-    )
-    
-    output = model.fast_generate(
-        text,
-        sampling_params=test_sampling_params,
-        lora_request=None,
-    )[0].outputs[0].text
-    
-    print(f"\n📝 GRPO Model Test Response:")
-    print("=" * 50)
-    print(output[:500] + "..." if len(output) > 500 else output)
-    print("=" * 50)
-    
-    print(f"\n✅ GRPO training completed successfully!")
-    print(f"📈 Model saved and ready for evaluation")
+    print(f"\n✅ QUICK TEST COMPLETED!")
+    print(f"📈 Pipeline validated with 10 GRPO steps")
     
     return save_path
 
 
-def generate_simple_control_dataset(num_samples=500, target_dt=0.1, target_steps=50):
-    """Generate control dataset - exact copy from notebook."""
+def generate_simple_control_dataset(num_samples=50, target_dt=0.1, target_steps=50):
+    """Generate small control dataset for quick test."""
     import numpy as np
     import scipy.linalg as la
     
@@ -435,28 +346,7 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         
         control_inputs = solve_double_integrator(x0, v0, target_dt, target_steps)
         
-        reasoning = f"""For the double integrator system starting at position {x0:.2f} and velocity {v0:.2f}, I'll apply Linear Quadratic Regulator (LQR) control to reach the origin optimally in {total_time_sec:.2f} seconds using {target_steps} steps.
-
-        The LQR approach provides an optimal feedback control law by minimizing a quadratic cost function that balances:
-        1. The error in state (position and velocity)
-        2. The control effort used
-
-        For a double integrator with dynamics:
-        - ẋ = v
-        - v̇ = u
-
-        The discrete-time state-space representation is:
-        - x(k+1) = Ax(k) + Bu(k)
-
-        Where:
-        - A = [[1, Δt], [0, 1]]
-        - B = [[0.5(Δt)², Δt]]
-        - Δt = {target_dt:.2f} seconds
-
-        Computing the optimal gain matrix K through the Riccati equation gives a feedback law u = -Kx.
-        This produces a smooth control sequence that brings the system to the origin while respecting constraints.
-
-        The resulting {target_steps} control inputs applied over {total_time_sec:.2f} seconds will optimally control the system to the target state."""
+        reasoning = f"""Quick test reasoning for double integrator starting at position {x0:.2f} and velocity {v0:.2f}. Using LQR control to reach origin in {total_time_sec:.2f} seconds."""
         
         control_str = ", ".join([f"{u:.3f}" for u in control_inputs])
         complete_output = f"{reasoning_start}{reasoning}{reasoning_end}{solution_start}{control_str}{solution_end}"

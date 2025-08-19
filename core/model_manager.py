@@ -100,29 +100,22 @@ class ModelManager:
                           solution_end: str = "</CONTROLS>",
                           system_prompt: str = ""):
         """Set up chat template for the model."""
-        chat_template = \
-            "{% if messages[0]['role'] == 'system' %}"\
-                "{{ messages[0]['content'] + eos_token }}"\
-                "{% set loop_messages = messages[1:] %}"\
-            "{% else %}"\
-                "{{ '{system_prompt}' + eos_token }}"\
-                "{% set loop_messages = messages %}"\
-            "{% endif %}"\
-            "{% for message in loop_messages %}"\
-                "{% if message['role'] == 'user' %}"\
-                    "{{ message['content'] }}"\
-                "{% elif message['role'] == 'assistant' %}"\
-                    "{{ message['content'] + eos_token }}"\
-                "{% endif %}"\
-            "{% endfor %}"\
-            "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
+        # Simplified chat template to avoid Jinja2 parsing errors
+        simple_template = (
+            "{% for message in messages %}"
+            "{% if message['role'] == 'system' %}"
+            "{{ message['content'] + eos_token }}"
+            "{% elif message['role'] == 'user' %}"
+            "{{ message['content'] }}"
+            "{% elif message['role'] == 'assistant' %}"
+            "{{ message['content'] + eos_token }}"
             "{% endif %}"
-
-        # Replace with our specific template:
-        chat_template = chat_template \
-            .replace("'{system_prompt}'", f"'{system_prompt}'")\
-            .replace("'{reasoning_start}'", f"'{reasoning_start}'")
-        self.tokenizer.chat_template = chat_template
+            "{% endfor %}"
+            "{% if add_generation_prompt %}{{ '" + reasoning_start + "' }}"
+            "{% endif %}"
+        )
+        
+        self.tokenizer.chat_template = simple_template
     
     def save_checkpoint(self, save_dir: str, metadata: Optional[Dict] = None):
         """Save model checkpoint with metadata."""

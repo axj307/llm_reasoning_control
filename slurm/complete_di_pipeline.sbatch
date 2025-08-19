@@ -59,55 +59,26 @@ python scripts/generate_data.py \
 
 echo "✅ Data generation completed"
 
-# PHASE 2: SFT TRAINING
+# PHASE 2: SFT + GRPO TRAINING (Combined)
 echo ""
-echo "🎓 PHASE 2: SFT TRAINING"
+echo "🚀 PHASE 2: SFT + GRPO TRAINING"
 echo "============================================================"
 
-echo "🔧 Training SFT model for double integrator..."
-python scripts/train_single_system.py \
-    --system double_integrator \
-    --dataset-name di_complete \
-    --training-type sft \
-    --lora-rank 32 \
-    --sft-max-samples 900 \
-    --eval-max-samples 100
-
-# Check if SFT completed successfully
-if [ -d "models/single_system/double_integrator/sft/latest" ]; then
-    echo "✅ SFT training completed successfully"
-else
-    echo "❌ SFT training failed - checking for alternative location..."
-    # Find the most recent SFT model
-    SFT_MODEL=$(find models/ -name "*sft*" -type d | head -1)
-    if [ -n "$SFT_MODEL" ]; then
-        echo "📁 Found SFT model at: $SFT_MODEL"
-    else
-        echo "💥 No SFT model found - cannot proceed to GRPO"
-        exit 1
-    fi
-fi
-
-# PHASE 3: GRPO TRAINING
-echo ""
-echo "🚀 PHASE 3: GRPO TRAINING" 
-echo "============================================================"
-
-echo "🔧 Training GRPO model using working parameters..."
+echo "🔧 Training SFT + GRPO model using working parameters..."
 python scripts/train_grpo_working_params.py
 
 # Check if GRPO completed successfully
 if [ -d "models/working_notebook/grpo_working_params_model" ]; then
-    echo "✅ GRPO training completed successfully"
+    echo "✅ SFT + GRPO training completed successfully"
     GRPO_MODEL="models/working_notebook/grpo_working_params_model"
 else
-    echo "❌ GRPO training failed - will evaluate SFT only"
+    echo "❌ SFT + GRPO training failed"
     GRPO_MODEL=""
 fi
 
-# PHASE 4: MODEL EVALUATION
+# PHASE 3: MODEL EVALUATION
 echo ""
-echo "📊 PHASE 4: MODEL EVALUATION"
+echo "📊 PHASE 3: MODEL EVALUATION"
 echo "============================================================"
 
 # Evaluate SFT model

@@ -153,7 +153,22 @@ def train_sft_model(model_manager: UniversalModelManager,
     )
 
     # Run pre-training
-    trainer.train()
+    result = trainer.train()
+    
+    # Save the trained SFT model
+    print("\n💾 Saving SFT model...")
+    save_path = "models/single_system/double_integrator/sft/latest"
+    
+    # Create directory
+    import os
+    os.makedirs(save_path, exist_ok=True)
+    
+    # Save the model using proper PEFT method
+    model_manager.model.save_pretrained(save_path)
+    model_manager.tokenizer.save_pretrained(save_path)
+    print(f"✅ SFT model saved to: {save_path}")
+    
+    return result
 
 
 def setup_universal_chat_template(model_manager: UniversalModelManager,
