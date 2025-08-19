@@ -93,7 +93,7 @@ if [ -d "models/single_system/double_integrator/sft/latest" ]; then
         --model-path models/single_system/double_integrator/sft/latest \
         --model-type single_system \
         --systems double_integrator \
-        --eval-dataset double_integrator_eval \
+        --eval-dataset double_integrator \
         --num-test-cases 10 \
         --save-plots \
         --plot-dir "$OUTPUT_DIR/sft_evaluation" \
@@ -109,7 +109,7 @@ if [ -n "$GRPO_MODEL" ] && [ -d "$GRPO_MODEL" ]; then
         --model-path "$GRPO_MODEL" \
         --model-type single_system \
         --systems double_integrator \
-        --eval-dataset double_integrator_eval \
+        --eval-dataset double_integrator \
         --num-test-cases 10 \
         --save-plots \
         --plot-dir "$OUTPUT_DIR/grpo_evaluation" \

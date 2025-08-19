@@ -1,0 +1,58 @@
+🔬 SFT vs GRPO MODEL COMPARISON
+==================================================
+
+📊 Testing: SFT Model (Working)
+----------------------------------------
+❌ Evaluation failed: Traceback (most recent call last):
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 305, in <module>
+    main()
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 114, in main
+    model, tokenizer, lora_request, metadata = manager.load_checkpoint(args.model_path)
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/core/model_manager.py", line 183, in load_checkpoint
+    with open(load_path / "metadata.json", 'r') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'models/working_notebook/sft_model/metadata.json'
+
+
+📊 Testing: GRPO Model (New)
+----------------------------------------
+❌ Evaluation failed: Traceback (most recent call last):
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 305, in <module>
+    main()
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 114, in main
+    model, tokenizer, lora_request, metadata = manager.load_checkpoint(args.model_path)
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/core/model_manager.py", line 183, in load_checkpoint
+    with open(load_path / "metadata.json", 'r') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'models/working_notebook/grpo_working_params_model/metadata.json'
+
+
+🏆 COMPARISON RESULTS
+==================================================
+❌ Insufficient successful evaluations for comparison
+   SFT Model (Working): Traceback (most recent call last):
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 305, in <module>
+    main()
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 114, in main
+    model, tokenizer, lora_request, metadata = manager.load_checkpoint(args.model_path)
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/core/model_manager.py", line 183, in load_checkpoint
+    with open(load_path / "metadata.json", 'r') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'models/working_notebook/sft_model/metadata.json'
+
+   GRPO Model (New): Traceback (most recent call last):
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 305, in <module>
+    main()
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/scripts/evaluate_model.py", line 114, in main
+    model, tokenizer, lora_request, metadata = manager.load_checkpoint(args.model_path)
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/orcd/home/002/amitjain/project/Unsloth/llm_reasoning_control_refactored/core/model_manager.py", line 183, in load_checkpoint
+    with open(load_path / "metadata.json", 'r') as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'models/working_notebook/grpo_working_params_model/metadata.json'
+
+
+✅ Comparison completed!
