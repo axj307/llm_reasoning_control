@@ -149,7 +149,7 @@ fig.suptitle('Double Integrator: LQR Reference Solutions', fontsize=16)
 
 # Load test data
 try:
-    with open('datasets/di_eval_complete_eval.pkl', 'rb') as f:
+    with open('datasets/double_integrator_eval.pkl', 'rb') as f:
         test_data = pickle.load(f)
     
     # Plot first 4 test cases
