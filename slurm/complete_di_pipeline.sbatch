@@ -34,30 +34,43 @@ mkdir -p "$OUTPUT_DIR"
 
 echo "📁 Output directory: $OUTPUT_DIR"
 
-# PHASE 1: DATA GENERATION
+# PHASE 1: DATA VERIFICATION/GENERATION
 echo ""
-echo "📊 PHASE 1: DATA GENERATION"
+echo "📊 PHASE 1: DATA VERIFICATION/GENERATION"
 echo "============================================================"
 
-# Generate fresh training dataset (1000 samples for robust training)
-echo "🏭 Generating double integrator training dataset..."
-python scripts/generate_data.py \
-    --systems double_integrator \
-    --total-samples 1000 \
-    --split-ratio 0.9 \
-    --dataset-name di_complete \
-    --output-dir datasets/
+# Check if datasets already exist
+TRAIN_DATASET="datasets/di_complete_train.json"
+EVAL_DATASET="datasets/di_eval_complete_eval.json"
 
-# Generate evaluation dataset (100 samples for thorough testing)
-echo "🧪 Generating double integrator evaluation dataset..."
-python scripts/generate_data.py \
-    --systems double_integrator \
-    --total-samples 100 \
-    --split-ratio 0.0 \
-    --dataset-name di_eval_complete \
-    --output-dir datasets/
+if [ -f "$TRAIN_DATASET" ] && [ -f "$EVAL_DATASET" ]; then
+    echo "✅ Existing datasets found:"
+    echo "   Training: $TRAIN_DATASET ($(wc -l < $TRAIN_DATASET) lines)"
+    echo "   Evaluation: $EVAL_DATASET ($(wc -l < $EVAL_DATASET) lines)"
+    echo "📋 Skipping data generation - using existing datasets"
+else
+    echo "🏭 Datasets not found, generating fresh data..."
+    
+    # Generate fresh training dataset (1000 samples for robust training)
+    echo "🏭 Generating double integrator training dataset..."
+    python scripts/generate_data.py \
+        --systems double_integrator \
+        --total-samples 1000 \
+        --split-ratio 0.9 \
+        --dataset-name di_complete \
+        --output-dir datasets/
 
-echo "✅ Data generation completed"
+    # Generate evaluation dataset (100 samples for thorough testing)
+    echo "🧪 Generating double integrator evaluation dataset..."
+    python scripts/generate_data.py \
+        --systems double_integrator \
+        --total-samples 100 \
+        --split-ratio 0.0 \
+        --dataset-name di_eval_complete \
+        --output-dir datasets/
+
+    echo "✅ Data generation completed"
+fi
 
 # PHASE 2: SFT + GRPO TRAINING (Combined)
 echo ""
@@ -68,9 +81,9 @@ echo "🔧 Training SFT + GRPO model using working parameters..."
 python scripts/train_grpo_working_params.py
 
 # Check if GRPO completed successfully
-if [ -d "models/working_notebook/grpo_working_params_model" ]; then
+if [ -d "models/single_system/double_integrator/grpo/latest" ]; then
     echo "✅ SFT + GRPO training completed successfully"
-    GRPO_MODEL="models/working_notebook/grpo_working_params_model"
+    GRPO_MODEL="models/single_system/double_integrator/grpo/latest"
 else
     echo "❌ SFT + GRPO training failed"
     GRPO_MODEL=""
@@ -81,17 +94,21 @@ echo ""
 echo "📊 PHASE 3: MODEL EVALUATION"
 echo "============================================================"
 
-# Evaluate SFT model
-echo "🧪 Evaluating SFT model..."
-python scripts/evaluate_model.py \
-    --model-path models/single_system/double_integrator/sft/latest \
-    --model-type single_system \
-    --systems double_integrator \
-    --eval-dataset di_eval_complete \
-    --num-test-cases 20 \
-    --save-plots \
-    --plot-dir "$OUTPUT_DIR/sft_evaluation" \
-    --enhanced-plots
+# Evaluate SFT model (if it exists - it's created during GRPO training)
+if [ -d "models/single_system/double_integrator/sft/latest" ]; then
+    echo "🧪 Evaluating SFT model..."
+    python scripts/evaluate_model.py \
+        --model-path models/single_system/double_integrator/sft/latest \
+        --model-type single_system \
+        --systems double_integrator \
+        --eval-dataset di_eval_complete \
+        --num-test-cases 20 \
+        --save-plots \
+        --plot-dir "$OUTPUT_DIR/sft_evaluation" \
+        --enhanced-plots
+else
+    echo "⚠️  SFT model not found, skipping SFT evaluation"
+fi
 
 # Evaluate GRPO model (if available)
 if [ -n "$GRPO_MODEL" ] && [ -d "$GRPO_MODEL" ]; then

@@ -39,14 +39,16 @@ def main():
     )
     train_data = data_generator.generate_single_system_dataset(args.system, num_samples=500)
 
-    # --- Model Setup ---
+    # --- Model Setup (using exact notebook parameters) ---
     print("--- Setting up Model ---")
-    model_manager = UniversalModelManager(base_model_name=config["model"]["base_model_name"])
+    model_manager = UniversalModelManager(base_model_name="unsloth/Qwen3-4B-Base")
     model_manager.setup_model(
-        max_seq_length=config["model"]["max_seq_length"],
-        lora_rank=config["model"]["lora_rank"],
-        load_in_4bit=config["model"]["load_in_4bit"],
-        gpu_memory_utilization=config["model"]["gpu_memory_utilization"],
+        max_seq_length=2048,  # Exact notebook parameter
+        lora_rank=32,         # Exact notebook parameter
+        load_in_4bit=True,
+        gpu_memory_utilization=0.7,  # Exact notebook parameter
+        fast_inference=True,  # Enable vLLM like notebook
+        working_notebook_mode=True  # Use notebook-compatible setup
     )
     model_manager.setup_chat_template(
         reasoning_start=config["system"]["reasoning_start"],

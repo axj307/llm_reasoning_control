@@ -109,12 +109,9 @@ def main():
             else:
                 system_name = "double_integrator"  # Default for working notebook models
             
-            # Load as single system model but with custom path
-            from core.model_manager import load_model_from_path
-            model, tokenizer, lora_request = load_model_from_path(args.model_path)
-            # Store in manager for chat template setup
-            manager.model = model
-            manager.tokenizer = tokenizer
+            # Load using model manager with save_lora() approach
+            manager = UniversalModelManager()
+            model, tokenizer, lora_request, metadata = manager.load_checkpoint(args.model_path)
             trained_systems = [system_name]
             
         else:

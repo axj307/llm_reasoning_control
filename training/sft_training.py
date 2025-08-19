@@ -58,30 +58,26 @@ def train_sft_model(model_manager: UniversalModelManager,
     
     # Check if chat template is set up, if not, set it up
     if not hasattr(model_manager.tokenizer, 'chat_template') or model_manager.tokenizer.chat_template is None:
-        print("⚠️  Chat template not set, setting up default template...")
-        # Set up a basic chat template
-        from environments import get_system
+        print("⚠️  Chat template not set, setting up simplified template...")
         
-        # Get system type from first example
-        system_type = train_data[0].get("system_type", "double_integrator")
-        
-        try:
-            system = get_system(system_type)()
-            system_prompt = system.get_system_prompt(
-                "<REASONING>", "</REASONING>", "<CONTROLS>", "</CONTROLS>"
-            )
-        except:
-            # Fallback system prompt
-            system_prompt = "You are a control systems expert."
-        
-        model_manager.setup_chat_template(
-            reasoning_start="<REASONING>",
-            reasoning_end="</REASONING>",
-            solution_start="<CONTROLS>",
-            solution_end="</CONTROLS>",
-            system_prompt=system_prompt
+        # Simplified chat template (no embedded variables to avoid Jinja issues)
+        reasoning_start = "<REASONING>"
+        simple_template = (
+            "{% for message in messages %}"
+            "{% if message['role'] == 'system' %}"
+            "{{ message['content'] + eos_token }}"
+            "{% elif message['role'] == 'user' %}"
+            "{{ message['content'] }}"
+            "{% elif message['role'] == 'assistant' %}"
+            "{{ message['content'] + eos_token }}"
+            "{% endif %}"
+            "{% endfor %}"
+            "{% if add_generation_prompt %}{{ '" + reasoning_start + "' }}"
+            "{% endif %}"
         )
-        print("✅ Chat template set up successfully")
+        
+        model_manager.tokenizer.chat_template = simple_template
+        print("✅ Simplified chat template set up successfully")
     
     # Prepare datasets for SFT training - EXACT notebook approach
     def format_for_sft(example):
@@ -117,38 +113,31 @@ def train_sft_model(model_manager: UniversalModelManager,
         train_dataset=train_dataset,
         args=SFTConfig(
             dataset_text_field="text",
-            per_device_train_batch_size=4,  # Increased from 1
-            gradient_accumulation_steps=1,
-            warmup_steps=5,
-            num_train_epochs=2,
-            learning_rate=2e-4,
-            logging_steps=5,
-            optim="adamw_8bit",
-            weight_decay=0.01,
-            lr_scheduler_type="linear",
-            seed=3407,
-            report_to="wandb",
+            per_device_train_batch_size=4,  # EXACT from notebook
+            gradient_accumulation_steps=1,  # EXACT from notebook
+            warmup_steps=5,                 # EXACT from notebook
+            num_train_epochs=2,             # EXACT from notebook
+            learning_rate=2e-4,             # EXACT from notebook
+            logging_steps=5,                # EXACT from notebook
+            optim="adamw_8bit",             # EXACT from notebook
+            weight_decay=0.01,              # EXACT from notebook
+            lr_scheduler_type="linear",     # EXACT from notebook
+            seed=3407,                      # EXACT from notebook
+            report_to="none",               # Disable wandb for cluster
+            output_dir="./sft_training_output",
+            dataloader_num_workers=0,      # Keep disabled for cluster stability
         ),
     )
 
     # Run pre-training
     result = trainer.train()
     
-    # Save the trained SFT model
-    print("\n💾 Saving SFT model...")
+    # Save the trained SFT model using notebook approach
+    print("\n💾 Saving SFT model using notebook approach...")
     save_path = "models/single_system/double_integrator/sft/latest"
     
-    # Create directory
-    import os
-    import json
+    # Prepare metadata for notebook-style saving
     import numpy as np
-    os.makedirs(save_path, exist_ok=True)
-    
-    # Save the model using proper PEFT method
-    model_manager.model.save_pretrained(save_path)
-    model_manager.tokenizer.save_pretrained(save_path)
-    
-    # Create metadata.json file for evaluation script
     metadata = {
         "model_type": "sft",
         "system_name": "double_integrator",
@@ -161,11 +150,11 @@ def train_sft_model(model_manager: UniversalModelManager,
         "training_config": default_config
     }
     
-    with open(os.path.join(save_path, "metadata.json"), 'w') as f:
-        json.dump(metadata, f, indent=2)
+    # Save using model manager's save_checkpoint (which uses save_lora like notebook)
+    model_manager.save_checkpoint(save_path, metadata)
     
-    print(f"✅ SFT model saved to: {save_path}")
-    print(f"   📋 Metadata saved with training loss: {result.training_loss:.4f}")
+    print(f"✅ SFT model saved using notebook approach")
+    print(f"   📋 Training loss: {result.training_loss:.4f}")
     
     return result
 
