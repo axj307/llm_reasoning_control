@@ -28,20 +28,21 @@ echo "============================================"
 source ~/.bashrc
 conda activate unsloth_env
 
-# Define output directory
-OUTPUT_DIR="results/di_complete_$(date +%Y%m%d_%H%M%S)"
+# Define output directory with proper job naming
+OUTPUT_DIR="figures/job_${SLURM_JOB_ID}"
 mkdir -p "$OUTPUT_DIR"
 
-echo "📁 Output directory: $OUTPUT_DIR"
+echo "📁 Results will be saved to: $OUTPUT_DIR"
+echo "🏷️  Job ID: $SLURM_JOB_ID"
 
 # PHASE 1: DATA VERIFICATION/GENERATION
 echo ""
 echo "📊 PHASE 1: DATA VERIFICATION/GENERATION"
 echo "============================================================"
 
-# Check if datasets already exist
-TRAIN_DATASET="datasets/di_complete_train.json"
-EVAL_DATASET="datasets/di_eval_complete_eval.json"
+# Check if datasets already exist (using clear system-based naming)
+TRAIN_DATASET="datasets/double_integrator_train.json"
+EVAL_DATASET="datasets/double_integrator_eval.json"
 
 if [ -f "$TRAIN_DATASET" ] && [ -f "$EVAL_DATASET" ]; then
     echo "✅ Existing datasets found:"
@@ -51,22 +52,13 @@ if [ -f "$TRAIN_DATASET" ] && [ -f "$EVAL_DATASET" ]; then
 else
     echo "🏭 Datasets not found, generating fresh data..."
     
-    # Generate fresh training dataset (1000 samples for robust training)
-    echo "🏭 Generating double integrator training dataset..."
+    # Generate double integrator datasets (1000 train + 100 eval samples)
+    echo "🏭 Generating double integrator datasets..."
     python scripts/generate_data.py \
         --systems double_integrator \
-        --total-samples 1000 \
-        --split-ratio 0.9 \
-        --dataset-name di_complete \
-        --output-dir datasets/
-
-    # Generate evaluation dataset (100 samples for thorough testing)
-    echo "🧪 Generating double integrator evaluation dataset..."
-    python scripts/generate_data.py \
-        --systems double_integrator \
-        --total-samples 100 \
-        --split-ratio 0.0 \
-        --dataset-name di_eval_complete \
+        --train-samples 1000 \
+        --eval-samples 100 \
+        --dataset-name double_integrator \
         --output-dir datasets/
 
     echo "✅ Data generation completed"
@@ -101,8 +93,8 @@ if [ -d "models/single_system/double_integrator/sft/latest" ]; then
         --model-path models/single_system/double_integrator/sft/latest \
         --model-type single_system \
         --systems double_integrator \
-        --eval-dataset di_eval_complete \
-        --num-test-cases 20 \
+        --eval-dataset double_integrator_eval \
+        --num-test-cases 10 \
         --save-plots \
         --plot-dir "$OUTPUT_DIR/sft_evaluation" \
         --enhanced-plots
@@ -117,8 +109,8 @@ if [ -n "$GRPO_MODEL" ] && [ -d "$GRPO_MODEL" ]; then
         --model-path "$GRPO_MODEL" \
         --model-type single_system \
         --systems double_integrator \
-        --eval-dataset di_eval_complete \
-        --num-test-cases 20 \
+        --eval-dataset double_integrator_eval \
+        --num-test-cases 10 \
         --save-plots \
         --plot-dir "$OUTPUT_DIR/grpo_evaluation" \
         --enhanced-plots
@@ -243,11 +235,8 @@ print('✅ Model performance summary plot saved')
 print('🎨 Figure generation completed!')
 "
 
-# Copy evaluation plots to output directory
-echo "📁 Copying evaluation plots..."
-if [ -d "figures" ]; then
-    cp -r figures/* "$OUTPUT_DIR/"
-fi
+# Note: Individual evaluation plots are already saved directly to $OUTPUT_DIR
+# No need to copy from a global figures directory
 
 # PHASE 7: GENERATE FINAL REPORT
 echo ""
@@ -271,7 +260,7 @@ This report contains the complete training and evaluation results for the double
 1. ✅ **Data Generation**: 1000 training samples, 100 evaluation samples
 2. ✅ **SFT Training**: Supervised fine-tuning with LoRA rank 32
 3. ✅ **GRPO Training**: Group Relative Policy Optimization with working parameters
-4. ✅ **Model Evaluation**: Comprehensive testing on 20 test cases
+4. ✅ **Model Evaluation**: Comprehensive testing on 10 test cases per model
 5. ✅ **Comparative Analysis**: Direct SFT vs GRPO comparison
 6. ✅ **Figure Generation**: Publication-ready plots and analysis
 7. ✅ **Report Generation**: This comprehensive report
@@ -310,18 +299,19 @@ echo "============================================================"
 echo "✅ Data Generation: 1000 training + 100 evaluation samples"
 echo "✅ SFT Training: Completed with LoRA rank 32"
 echo "✅ GRPO Training: Completed with working parameters"
-echo "✅ Model Evaluation: 20 test cases per model"
+echo "✅ Model Evaluation: 10 test cases per model"
 echo "✅ Comparative Analysis: SFT vs GRPO performance"
 echo "✅ Figure Generation: Publication-ready plots"
 echo "✅ Report Generation: Comprehensive documentation"
 echo ""
 echo "📁 All results saved to: $OUTPUT_DIR"
-echo "📊 Key files:"
+echo "📊 Key files generated:"
 echo "   - pipeline_report.md: Complete summary"
-echo "   - comparison_results.txt: Model comparison"
-echo "   - sft_evaluation/: SFT results and plots"
-echo "   - grpo_evaluation/: GRPO results and plots"
-echo "   - *.png: Publication-ready figures"
+echo "   - comparison_results.txt: Model comparison"  
+echo "   - sft_evaluation/: SFT model results and plots"
+echo "   - grpo_evaluation/: GRPO model results and plots"
+echo "   - lqr_reference_solutions.png: LQR reference trajectories"
+echo "   - model_performance_summary.png: Performance comparison chart"
 echo ""
 echo "🚀 Double Integrator pipeline completed successfully!"
 echo "🎯 Ready to proceed to Van der Pol Oscillator (VO)"

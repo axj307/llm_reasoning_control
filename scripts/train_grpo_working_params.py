@@ -117,7 +117,7 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     # Load existing dataset or generate if not found
     print("📊 Loading control dataset...")
     
-    dataset_path = "datasets/di_complete_train.json"
+    dataset_path = "datasets/double_integrator_train.json"
     if os.path.exists(dataset_path):
         print(f"✅ Loading existing dataset: {dataset_path}")
         # Use UniversalDataGenerator to load and format the data
