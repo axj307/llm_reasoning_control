@@ -86,34 +86,24 @@ echo ""
 echo "📊 PHASE 3: MODEL EVALUATION"
 echo "============================================================"
 
-# Evaluate SFT model (if it exists - it's created during GRPO training)
+# Evaluate SFT model using notebook-style approach (if it exists)
 if [ -d "models/single_system/double_integrator/sft/latest" ]; then
-    echo "🧪 Evaluating SFT model..."
-    python scripts/evaluate_model.py \
+    echo "🧪 Evaluating SFT model (notebook-style)..."
+    python scripts/evaluate_model_notebook_style.py \
         --model-path models/single_system/double_integrator/sft/latest \
-        --model-type single_system \
-        --systems double_integrator \
-        --eval-dataset double_integrator \
-        --num-test-cases 10 \
-        --save-plots \
-        --plot-dir "$OUTPUT_DIR/sft_evaluation" \
-        --enhanced-plots
+        --num-cases 10 \
+        --save-dir "$OUTPUT_DIR/sft_evaluation"
 else
     echo "⚠️  SFT model not found, skipping SFT evaluation"
 fi
 
-# Evaluate GRPO model (if available)
+# Evaluate GRPO model using notebook-style approach (if available)
 if [ -n "$GRPO_MODEL" ] && [ -d "$GRPO_MODEL" ]; then
-    echo "🧪 Evaluating GRPO model..."
-    python scripts/evaluate_model.py \
+    echo "🧪 Evaluating GRPO model (notebook-style)..."
+    python scripts/evaluate_model_notebook_style.py \
         --model-path "$GRPO_MODEL" \
-        --model-type single_system \
-        --systems double_integrator \
-        --eval-dataset double_integrator \
-        --num-test-cases 10 \
-        --save-plots \
-        --plot-dir "$OUTPUT_DIR/grpo_evaluation" \
-        --enhanced-plots
+        --num-cases 10 \
+        --save-dir "$OUTPUT_DIR/grpo_evaluation"
 fi
 
 # PHASE 5: COMPARATIVE ANALYSIS
