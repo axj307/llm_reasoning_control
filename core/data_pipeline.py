@@ -290,7 +290,9 @@ The computed control sequence will guide the system to the desired target while 
         if for_training:
             # For training, we need the full messages
             dataset_dict = {
-                "messages": [d["messages"] for d in data],
+                "Messages": [d["Messages"] for d in data],
+                "prompt": [d["prompt"] for d in data],
+                "answer": [d["answer"] for d in data],
                 "system_type": [d["system_type"] for d in data],
                 "initial_state": [d["initial_state"] for d in data],
                 "controls": [d["controls"] for d in data]
@@ -301,6 +303,11 @@ The computed control sequence will guide the system to the desired target while 
         
         return Dataset.from_dict(dataset_dict)
     
+    def get_dataset(self, system_name: str, num_samples: int, for_training: bool = True):
+        """Generate and return a HuggingFace dataset."""
+        data = self.generate_single_system_dataset(system_name, num_samples)
+        return self.to_huggingface_dataset(data, for_training=for_training)
+
     def split_dataset(self, data: List[Dict[str, Any]], 
                      train_ratio: float = 0.9) -> Tuple[List[Dict], List[Dict]]:
         """Split dataset into train and eval sets."""

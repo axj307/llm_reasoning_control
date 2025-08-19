@@ -99,8 +99,37 @@ class ModelManager:
                           solution_start: str = "<CONTROLS>",
                           solution_end: str = "</CONTROLS>",
                           system_prompt: str = ""):
-        """Set up chat template for the model."""
-        # Simplified chat template to avoid Jinja2 parsing errors
+        """Set up chat template using EXACT notebook approach."""
+        # EXACT notebook chat template
+        chat_template = \
+            "{% if messages[0]['role'] == 'system' %}"\
+                "{{ messages[0]['content'] + eos_token }}"\
+                "{% set loop_messages = messages[1:] %}"\
+            "{% else %}"\
+                "{{ '{system_prompt}' + eos_token }}"\
+                "{% set loop_messages = messages %}"\
+            "{% endif %}"\
+            "{% for message in loop_messages %}"\
+                "{% if message['role'] == 'user' %}"\
+                    "{{ message['content'] }}"\
+                "{% elif message['role'] == 'assistant' %}"\
+                    "{{ message['content'] + eos_token }}"\
+                "{% endif %}"\
+            "{% endfor %}"\
+            "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
+            "{% endif %}"
+        
+        # Replace with specific template (EXACT notebook approach)
+        chat_template = chat_template\
+            .replace("'{system_prompt}'",   f"'{system_prompt}'")\
+            .replace("'{reasoning_start}'", f"'{reasoning_start}'")
+        
+        self.tokenizer.chat_template = chat_template
+        print(f"✅ Chat template set up using notebook approach")
+    
+    def _setup_default_chat_template(self):
+        """Set up default chat template for loaded models."""
+        reasoning_start = "<REASONING>"
         simple_template = (
             "{% for message in messages %}"
             "{% if message['role'] == 'system' %}"
@@ -116,15 +145,15 @@ class ModelManager:
         )
         
         self.tokenizer.chat_template = simple_template
+        print(f"✅ Default chat template configured for loaded model")
     
     def save_checkpoint(self, save_dir: str, metadata: Optional[Dict] = None):
-        """Save model checkpoint with metadata."""
+        """Save model checkpoint using notebook approach with save_lora()."""
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
         
-        # Save LoRA weights using PEFT's save_pretrained method
-        checkpoint_path = save_path / "checkpoint"
-        self.model.save_pretrained(str(checkpoint_path))
+        # Save LoRA weights using Unsloth's save_lora method (EXACT notebook approach)
+        self.model.save_lora(str(save_path))
         
         # Prepare metadata
         default_metadata = {
@@ -132,7 +161,8 @@ class ModelManager:
             "timestamp": datetime.now().isoformat(),
             "lora_rank": self.lora_rank,
             "max_seq_length": self.max_seq_length,
-            "training_config": self.training_config
+            "training_config": self.training_config,
+            "saved_with": "save_lora"  # Mark how this model was saved
         }
         
         if metadata:
@@ -142,39 +172,37 @@ class ModelManager:
         with open(save_path / "metadata.json", 'w') as f:
             json.dump(default_metadata, f, indent=2)
         
-        print(f"Model saved to {save_dir}")
+        print(f"Model saved to {save_dir} using notebook approach (save_lora)")
         return save_dir
     
     def load_checkpoint(self, load_dir: str):
-        """Load a saved model checkpoint."""
+        """Load a saved model checkpoint using notebook approach with load_lora()."""
         load_path = Path(load_dir)
         
         # Load metadata
         with open(load_path / "metadata.json", 'r') as f:
             metadata = json.load(f)
         
-        # Setup base model if not already done
+        # Setup base model if not already done (using exact notebook parameters)
         if self.model is None:
             self.setup_model(
                 max_seq_length=metadata.get('max_seq_length', 2048),
-                lora_rank=metadata.get('lora_rank', 16)
+                lora_rank=metadata.get('lora_rank', 32),  # Default to 32 like notebook
+                fast_inference=True,  # Enable vLLM for inference (notebook approach)
+                working_notebook_mode=True  # Use notebook-compatible parameters
             )
         
-        # Load LoRA weights using PEFT's from_pretrained method
-        # Check if adapter files are directly in the directory or in a checkpoint subdirectory
+        # Load using notebook approach: model.load_lora() returns lora_request
         if (load_path / "adapter_config.json").exists():
-            lora_path = load_path
+            print(f"Loading model using notebook approach (load_lora) from {load_dir}")
+            lora_request = self.model.load_lora(str(load_path))
+            
+            # Set up chat template (CRITICAL for proper inference)
+            self._setup_default_chat_template()
+            
+            return self.model, self.tokenizer, lora_request, metadata
         else:
-            lora_path = load_path / "checkpoint"
-        
-        # Import PeftModel for loading adapters
-        from peft import PeftModel
-        
-        # Load the LoRA adapter onto the base model
-        self.model = PeftModel.from_pretrained(self.model, str(lora_path))
-        
-        print(f"Model loaded from {load_dir}")
-        return self.model, self.tokenizer, None, metadata
+            raise FileNotFoundError(f"No adapter_config.json found in {load_path}")
 
 
 class UniversalModelManager(ModelManager):
