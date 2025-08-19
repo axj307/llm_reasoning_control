@@ -129,8 +129,8 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     control_dataset = control_dataset.map(format_for_sft)
     print(f"Dataset created: {len(control_dataset)} samples")
     
-    # Quick SFT pre-training (1 epoch only)
-    print("🔧 Quick SFT pre-training (1 epoch)...")
+    # Complete SFT pre-training (2 epochs like notebook)
+    print("🔧 Complete SFT pre-training (2 epochs)...")
     from trl import SFTTrainer, SFTConfig
     
     sft_trainer = SFTTrainer(
@@ -141,8 +141,8 @@ Then provide exactly {current_steps} control values as a comma-separated list be
             dataset_text_field="text",
             per_device_train_batch_size=4,
             gradient_accumulation_steps=1,
-            warmup_steps=2,  # Reduced
-            num_train_epochs=1,  # Reduced from 2
+            warmup_steps=5,  # Full warmup
+            num_train_epochs=2,  # Complete SFT training
             learning_rate=2e-4,
             logging_steps=5,
             optim="adamw_8bit",
@@ -156,9 +156,9 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         ),
     )
     
-    # Run quick pre-training
+    # Run complete SFT training
     sft_result = sft_trainer.train()
-    print(f"✅ Quick SFT completed. Loss: {sft_result.training_loss:.4f}")
+    print(f"✅ Complete SFT completed. Loss: {sft_result.training_loss:.4f}")
     
     # Clear cache
     torch.cuda.empty_cache()
@@ -284,7 +284,29 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     os.makedirs(save_path, exist_ok=True)
     model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
+    
+    # Create metadata.json file for evaluation script
+    import json
+    metadata = {
+        "model_type": "grpo_quick_test",
+        "system_name": "double_integrator", 
+        "training_type": "grpo",
+        "base_model": "unsloth/Qwen3-4B-Base",
+        "max_seq_length": max_seq_length,
+        "lora_rank": lora_rank,
+        "sft_loss": float(sft_result.training_loss),
+        "grpo_loss": float(grpo_result.training_loss),
+        "grpo_max_steps": training_args.max_steps,
+        "timestamp": str(np.datetime64('now')),
+        "num_generations": training_args.num_generations,
+        "note": "Quick test with 10 GRPO steps"
+    }
+    
+    with open(os.path.join(save_path, "metadata.json"), 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
     print(f"💾 Quick test model saved to: {save_path}")
+    print(f"   📋 Metadata saved with SFT loss: {sft_result.training_loss:.4f}, GRPO loss: {grpo_result.training_loss:.4f}")
     
     print(f"\n✅ QUICK TEST COMPLETED!")
     print(f"📈 Pipeline validated with 10 GRPO steps")

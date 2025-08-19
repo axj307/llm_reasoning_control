@@ -161,12 +161,32 @@ def train_sft_model(model_manager: UniversalModelManager,
     
     # Create directory
     import os
+    import json
+    import numpy as np
     os.makedirs(save_path, exist_ok=True)
     
     # Save the model using proper PEFT method
     model_manager.model.save_pretrained(save_path)
     model_manager.tokenizer.save_pretrained(save_path)
+    
+    # Create metadata.json file for evaluation script
+    metadata = {
+        "model_type": "sft",
+        "system_name": "double_integrator",
+        "training_type": "sft",
+        "base_model": "unsloth/Qwen3-4B-Base",
+        "max_seq_length": 2048,
+        "lora_rank": 32,
+        "training_loss": float(result.training_loss),
+        "timestamp": str(np.datetime64('now')),
+        "training_config": default_config
+    }
+    
+    with open(os.path.join(save_path, "metadata.json"), 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
     print(f"✅ SFT model saved to: {save_path}")
+    print(f"   📋 Metadata saved with training loss: {result.training_loss:.4f}")
     
     return result
 

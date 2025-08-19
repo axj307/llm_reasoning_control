@@ -337,8 +337,31 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     
     # Save the model
     save_path = "models/working_notebook/grpo_working_params_model"
-    model.save_lora(save_path)
+    os.makedirs(save_path, exist_ok=True)
+    model.save_pretrained(save_path)
+    tokenizer.save_pretrained(save_path)
+    
+    # Create metadata.json file for evaluation script
+    import json
+    metadata = {
+        "model_type": "grpo",
+        "system_name": "double_integrator", 
+        "training_type": "grpo",
+        "base_model": "unsloth/Qwen3-4B-Base",
+        "max_seq_length": max_seq_length,
+        "lora_rank": lora_rank,
+        "sft_loss": float(sft_result.training_loss),
+        "grpo_loss": float(grpo_result.training_loss),
+        "grpo_max_steps": training_args.max_steps,
+        "timestamp": str(np.datetime64('now')),
+        "num_generations": training_args.num_generations
+    }
+    
+    with open(os.path.join(save_path, "metadata.json"), 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
     print(f"💾 GRPO model saved to: {save_path}")
+    print(f"   📋 Metadata saved with SFT loss: {sft_result.training_loss:.4f}, GRPO loss: {grpo_result.training_loss:.4f}")
     
     # Quick test
     print("🧪 Testing GRPO model...")
