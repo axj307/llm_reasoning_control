@@ -63,31 +63,36 @@ def load_model_notebook_style(model_path):
         loftq_config=None,
     )
 
-    # Set up chat template
-    # Use a flexible chat template - the one from the notebook is too rigid
-    # and can cause issues if the model's output format changes slightly.
+    # Set up chat template (EXACT match with training script)
     reasoning_start = "<REASONING>"
+    reasoning_end = "</REASONING>"
+    solution_start = "<CONTROLS>"
+    solution_end = "</CONTROLS>"
     system_prompt = get_system_prompt(0.1, 50)  # Default values
 
-    chat_template = (
-        "{% if messages[0]['role'] == 'system' %}"
-            "{{ messages[0]['content'] + eos_token }}"
-            "{% set loop_messages = messages[1:] %}"
-        "{% else %}"
-            "{{ 'You are a helpful assistant' + eos_token }}"
-            "{% set loop_messages = messages %}"
+    # Chat template (exact from training script)
+    chat_template = \
+        "{% if messages[0]['role'] == 'system' %}"\
+            "{{ messages[0]['content'] + eos_token }}"\
+            "{% set loop_messages = messages[1:] %}"\
+        "{% else %}"\
+            "{{ '{system_prompt}' + eos_token }}"\
+            "{% set loop_messages = messages %}"\
+        "{% endif %}"\
+        "{% for message in loop_messages %}"\
+            "{% if message['role'] == 'user' %}"\
+                "{{ message['content'] }}"\
+            "{% elif message['role'] == 'assistant' %}"\
+                "{{ message['content'] + eos_token }}"\
+            "{% endif %}"\
+        "{% endfor %}"\
+        "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
         "{% endif %}"
-        "{% for message in loop_messages %}"
-            "{% if message['role'] == 'user' %}"
-                "{{ message['content'] }}"
-            "{% elif message['role'] == 'assistant' %}"
-                "{{ message['content'] + eos_token }}"
-            "{% endif %}"
-        "{% endfor %}"
-        "{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}"
-        "{% endif %}"
-    )
 
+    # Replace placeholders (exact from training script)  
+    chat_template = chat_template\
+        .replace("'{system_prompt}'", f"'{system_prompt}'")\
+        .replace("'{reasoning_start}'", f"'{reasoning_start}'")
     tokenizer.chat_template = chat_template
     
     # Load LoRA weights
