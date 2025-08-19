@@ -88,8 +88,8 @@ echo "============================================================"
 
 # Evaluate SFT model using notebook-style approach (if it exists)
 if [ -d "models/single_system/double_integrator/sft/latest" ]; then
-    echo "🧪 Evaluating SFT model (notebook-style)..."
-    python scripts/evaluate_model_notebook_style.py \
+    echo "🧪 Evaluating SFT model..."
+    python scripts/evaluate_model.py \
         --model-path models/single_system/double_integrator/sft/latest \
         --num-cases 10 \
         --save-dir "$OUTPUT_DIR/sft_evaluation"
@@ -99,8 +99,8 @@ fi
 
 # Evaluate GRPO model using notebook-style approach (if available)
 if [ -n "$GRPO_MODEL" ] && [ -d "$GRPO_MODEL" ]; then
-    echo "🧪 Evaluating GRPO model (notebook-style)..."
-    python scripts/evaluate_model_notebook_style.py \
+    echo "🧪 Evaluating GRPO model..."
+    python scripts/evaluate_model.py \
         --model-path "$GRPO_MODEL" \
         --num-cases 10 \
         --save-dir "$OUTPUT_DIR/grpo_evaluation"

@@ -1,305 +1,361 @@
 #!/usr/bin/env python3
-"""Evaluation script for trained models."""
+"""
+Simplified evaluation script that matches the Jupyter notebook approach.
+Uses direct model loading, fast_generate(), and simple trajectory plotting.
+"""
 
 import os
 import sys
 import argparse
+import numpy as np
+import matplotlib.pyplot as plt
+import re
 from pathlib import Path
+import json
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from config import ALL_CONFIG, AVAILABLE_SYSTEMS
-from core.model_manager import UniversalModelManager
-from evaluation.inference import run_batch_inference, run_mpc_inference
-from evaluation.metrics import compute_batch_metrics
-from evaluation.visualization import (
-    plot_comparison, plot_metrics_comparison, plot_publication_comparison,
-    plot_model_only_trajectories, generate_publication_plots, plot_control_comparison
-)
-# Import simplified plotting function from evaluation module
-from evaluation.visualization import plot_all_trajectories_comparison
-from environments import get_system
-from data_utils import load_dataset, filter_dataset_by_system, load_train_eval_datasets
-import numpy as np
-import matplotlib.pyplot as plt
+from unsloth import FastLanguageModel
+from vllm import SamplingParams
 
+def get_system_prompt(dt, steps):
+    """Get system prompt for given dt and steps - matches notebook exactly."""
+    total_time = dt * steps
+    reasoning_start = "<REASONING>"
+    reasoning_end = "</REASONING>"
+    solution_start = "<CONTROLS>"
+    solution_end = "</CONTROLS>"
+    
+    return f"""You are a control systems expert.
+Given a double integrator system (ẍ = u) with initial position and velocity,
+generate a sequence of {steps} control inputs to reach the origin (0,0) in exactly {total_time:.2f} seconds.
+Position and velocity must stay within [-1, 1], and control inputs must be within [-3, 3].
+Explain your approach between {reasoning_start} and {reasoning_end}.
+Then provide exactly {steps} control values as a comma-separated list between {solution_start} and {solution_end}."""
+
+def load_model_notebook_style(model_path):
+    """Load model exactly like the notebook does."""
+    print(f"🚀 Loading model from: {model_path}")
+    
+    # Load base model with same parameters as notebook
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name="unsloth/Qwen3-4B-Base",
+        max_seq_length=2048,
+        load_in_4bit=True,
+        fast_inference=True,
+        max_lora_rank=32,
+        gpu_memory_utilization=0.7,
+    )
+    
+    # Enable PEFT model for LoRA (required for load_lora to work)
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=32, 
+        target_modules=[
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ],
+        lora_alpha=64,
+        use_gradient_checkpointing="unsloth",
+        random_state=3407,
+    )
+    
+    # Set up chat template (simplified version from notebook)
+    reasoning_start = "<REASONING>"
+    system_prompt = get_system_prompt(0.1, 50)  # Default values
+    
+    chat_template = \
+        "{% if messages[0]['role'] == 'system' %}"\
+            "{{ messages[0]['content'] + eos_token }}"\
+            "{% set loop_messages = messages[1:] %}"\
+        "{% else %}"\
+            "{{ '{system_prompt}' + eos_token }}"\
+            "{% set loop_messages = messages %}"\
+        "{% endif %}"\
+        "{% for message in loop_messages %}"\
+            "{% if message['role'] == 'user' %}"\
+                "{{ message['content'] }}"\
+            "{% elif message['role'] == 'assistant' %}"\
+                "{{ message['content'] + eos_token }}"\
+            "{% endif %}"\
+        "{% endfor %}"\
+        "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
+        "{% endif %}"
+    
+    chat_template = chat_template\
+        .replace("'{system_prompt}'", f"'{system_prompt}'")\
+        .replace("'{reasoning_start}'", f"'{reasoning_start}'")
+    tokenizer.chat_template = chat_template
+    
+    # Load LoRA weights
+    lora_request = model.load_lora(model_path)
+    print(f"✅ Model loaded with LoRA from: {model_path}")
+    
+    return model, tokenizer, lora_request
+
+def extract_controls_from_response(response, steps=50):
+    """Extract control values from model response."""
+    # Look for <CONTROLS>...</CONTROLS> pattern
+    control_match = re.search(r"<CONTROLS>(.*?)</CONTROLS>", response, re.DOTALL)
+    if not control_match:
+        return None
+    
+    try:
+        control_text = control_match.group(1).strip()
+        controls = [float(x.strip()) for x in control_text.split(",")]
+        if len(controls) == steps:
+            return controls
+    except Exception as e:
+        print(f"Failed to parse controls: {e}")
+        
+    return None
+
+def simulate_trajectory(x0, v0, controls, dt=0.1):
+    """Simulate double integrator trajectory."""
+    x, v = x0, v0
+    positions = [x]
+    velocities = [v]
+    times = [0]
+    
+    for i, u in enumerate(controls):
+        # Apply control with bounds checking
+        u = max(-3.0, min(3.0, u))
+        v = v + u * dt
+        x = x + v * dt
+        
+        # State bounds checking
+        v = max(-1.0, min(1.0, v))
+        x = max(-1.0, min(1.0, x))
+        
+        positions.append(x)
+        velocities.append(v)
+        times.append((i+1) * dt)
+    
+    return times, positions, velocities
+
+def evaluate_single_case(model, tokenizer, lora_request, x0, v0, dt=0.1, steps=50):
+    """Evaluate model on a single test case - notebook style."""
+    total_time = dt * steps
+    system_prompt = get_system_prompt(dt, steps)
+    
+    # Create test prompt exactly like notebook
+    test_prompt = f"Control a double integrator system with initial state [position={x0:.4f}, velocity={v0:.4f}] to reach the origin (0,0) in {total_time:.2f} seconds using {steps} steps. Ensure all states remain within [-1,1] and controls within [-3,3]."
+    
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": test_prompt},
+    ]
+    
+    # Apply chat template
+    text = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=False,
+    )
+    
+    # Generate using fast_generate (notebook style)
+    sampling_params = SamplingParams(
+        temperature=0.7,
+        top_k=50,
+        max_tokens=1024,
+    )
+    
+    try:
+        output = model.fast_generate(
+            text,
+            sampling_params=sampling_params,
+            lora_request=lora_request,
+        )[0].outputs[0].text
+        
+        # Extract controls
+        controls = extract_controls_from_response(output, steps)
+        
+        if controls is None:
+            return {
+                "success": False,
+                "error": "Failed to extract controls",
+                "response": output[:200] + "..." if len(output) > 200 else output
+            }
+        
+        # Simulate trajectory
+        times, positions, velocities = simulate_trajectory(x0, v0, controls, dt)
+        
+        # Calculate final error
+        final_pos = positions[-1]
+        final_vel = velocities[-1]
+        final_error = np.sqrt(final_pos**2 + final_vel**2)
+        
+        # Check constraints
+        valid_controls = all(-3 <= u <= 3 for u in controls)
+        valid_states = all(-1 <= p <= 1 and -1 <= v <= 1 for p, v in zip(positions, velocities))
+        
+        return {
+            "success": True,
+            "controls": controls,
+            "times": times,
+            "positions": positions,
+            "velocities": velocities,
+            "final_error": final_error,
+            "valid_controls": valid_controls,
+            "valid_states": valid_states,
+            "response": output
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "response": ""
+        }
+
+def plot_trajectories_notebook_style(results, save_path=None):
+    """Plot trajectories exactly like the notebook."""
+    plt.style.use('default')
+    plt.rcParams.update({
+        'font.size': 12,
+        'axes.labelsize': 14,
+        'axes.titlesize': 16,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'legend.fontsize': 10,
+        'figure.titlesize': 18
+    })
+    
+    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
+    fig.suptitle('Double Integrator: Model Generated Trajectories', fontsize=16)
+    
+    success_count = 0
+    for idx, result in enumerate(results):
+        if not result["success"]:
+            continue
+            
+        success_count += 1
+        label = f'Case {idx+1} (err={result["final_error"]:.3f})'
+        
+        # Position plot
+        axes[0].plot(result["times"], result["positions"], 'o-', label=label, alpha=0.7)
+        
+        # Velocity plot  
+        axes[1].plot(result["times"], result["velocities"], 'o-', label=label, alpha=0.7)
+        
+        # Control plot
+        axes[2].step(result["times"][:-1], result["controls"], where='post', label=label, alpha=0.7)
+    
+    # Configure plots
+    for ax in axes:
+        ax.axhline(y=0, color='r', linestyle='--', alpha=0.5)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+    
+    axes[0].set_ylabel('Position')
+    axes[0].set_ylim(-1.1, 1.1)
+    
+    axes[1].set_ylabel('Velocity')  
+    axes[1].set_ylim(-1.1, 1.1)
+    
+    axes[2].set_ylabel('Control Input')
+    axes[2].set_xlabel('Time (s)')
+    axes[2].set_ylim(-3.1, 3.1)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Trajectory plot saved: {save_path}")
+    
+    plt.close()
+    return success_count
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate trained control model")
-    
-    # Model selection
-    parser.add_argument("--model-path", type=str, required=True,
-                       help="Path to model directory")
-    parser.add_argument("--model-type", choices=["universal", "single_system"], required=True,
-                       help="Type of model")
-    
-    # System selection
-    parser.add_argument("--systems", type=str,
-                       help="Systems to evaluate on (comma-separated). If not specified, uses model's trained systems")
-    
-    # Test configuration
-    parser.add_argument("--num-test-cases", type=int, default=ALL_CONFIG["eval"]["num_test_cases"],
-                       help="Number of test cases per system")
-    parser.add_argument("--test-type", choices=["standard", "mpc", "both"], default="standard",
-                       help="Type of evaluation")
-    parser.add_argument("--mpc-horizon", type=int, default=ALL_CONFIG["eval"]["mpc_horizon"],
-                       help="MPC prediction horizon")
-    
-    # Evaluation data configuration
-    parser.add_argument("--eval-dataset", type=str,
-                       help="Name of pre-generated evaluation dataset")
-    parser.add_argument("--eval-data-file", type=str,
-                       help="Direct path to evaluation dataset file")
-    parser.add_argument("--dataset-dir", type=str, default="datasets",
-                       help="Directory containing datasets")
-    
-    # Sampling configuration
-    parser.add_argument("--temperature", type=float, default=ALL_CONFIG["eval"]["sampling_params"]["temperature"],
-                       help="Sampling temperature")
-    parser.add_argument("--random-seed", type=int, default=42,
-                       help="Random seed for test case generation")
-    
-    # Output configuration
-    parser.add_argument("--save-plots", action="store_true", default=ALL_CONFIG["eval"]["plot_config"]["save_plots"],
-                       help="Save generated plots")
-    parser.add_argument("--plot-dir", type=str, default=ALL_CONFIG["eval"]["plot_config"]["plot_directory"],
-                       help="Directory to save plots")
-    parser.add_argument("--show-plots", action="store_true",
-                       help="Display plots (requires display)")
-    parser.add_argument("--enhanced-plots", action="store_true",
-                       help="Generate enhanced 4-subplot comparison plots")
-    
-    # Hardware configuration
-    parser.add_argument("--gpu-id", type=str, default="0",
-                       help="GPU ID to use")
+    parser = argparse.ArgumentParser(description="Evaluate model using notebook-style approach")
+    parser.add_argument("--model-path", type=str, required=True, help="Path to LoRA model")
+    parser.add_argument("--num-cases", type=int, default=10, help="Number of test cases")
+    parser.add_argument("--save-dir", type=str, default="figures/notebook_eval", help="Save directory")
+    parser.add_argument("--dt", type=float, default=0.1, help="Time step")
+    parser.add_argument("--steps", type=int, default=50, help="Number of steps")
     
     args = parser.parse_args()
     
-    # Set GPU
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
-    print(f"Using GPU: {args.gpu_id}")
+    print(f"🧪 Notebook-Style Evaluation")
+    print(f"📁 Model: {args.model_path}")
+    print(f"🎯 Test cases: {args.num_cases}")
+    print(f"⏱️  Time step: {args.dt}, Steps: {args.steps}")
     
-    # Set random seed
-    np.random.seed(args.random_seed)
+    # Load model
+    model, tokenizer, lora_request = load_model_notebook_style(args.model_path)
     
-    # Create model manager and load model
-    print("Loading model...")
-    manager = UniversalModelManager()
+    # Generate test cases (random initial states)
+    print(f"\n🎲 Generating {args.num_cases} random test cases...")
+    np.random.seed(42)  # For reproducibility
+    test_cases = []
+    for i in range(args.num_cases):
+        x0 = np.random.uniform(-0.8, 0.8)
+        v0 = np.random.uniform(-0.8, 0.8)
+        test_cases.append((x0, v0))
+        print(f"   Case {i+1}: pos={x0:.4f}, vel={v0:.4f}")
     
-    if args.model_type == "universal":
-        model, tokenizer, lora_request, metadata = manager.load_universal_model()
-        trained_systems = metadata.get("trained_systems", AVAILABLE_SYSTEMS)
-    else:
-        # For single system, parse system name and training type from path
-        path_parts = Path(args.model_path).parts
+    # Evaluate each case
+    print(f"\n🚀 Running evaluation...")
+    results = []
+    for i, (x0, v0) in enumerate(test_cases):
+        print(f"   Processing case {i+1}/{args.num_cases}: ({x0:.4f}, {v0:.4f})")
+        result = evaluate_single_case(model, tokenizer, lora_request, x0, v0, args.dt, args.steps)
+        results.append(result)
         
-        # Check for standard format: models/single_system/{system}/{training_type}/latest
-        if len(path_parts) >= 3 and path_parts[-3] in AVAILABLE_SYSTEMS:
-            system_name = path_parts[-3]
-            training_type = path_parts[-2]  # sft or grpo
-            model, tokenizer, lora_request, metadata = manager.load_single_system_model(system_name, training_type=training_type)
-            trained_systems = [system_name]
-        
-        # Check for working notebook format: models/working_notebook/{model_name}
-        elif len(path_parts) >= 2 and path_parts[-2] == "working_notebook":
-            # For working notebook models, determine system from --systems argument or default to double_integrator
-            if args.systems:
-                system_name = args.systems.split(',')[0].strip()
-            else:
-                system_name = "double_integrator"  # Default for working notebook models
-            
-            # Load using model manager with save_lora() approach
-            manager = UniversalModelManager()
-            model, tokenizer, lora_request, metadata = manager.load_checkpoint(args.model_path)
-            trained_systems = [system_name]
-            
+        if result["success"]:
+            print(f"      ✅ Success - Final error: {result['final_error']:.4f}")
         else:
-            raise ValueError(f"Could not determine system from path: {args.model_path}. "
-                           f"Expected format: models/single_system/{{system}}/{{type}}/latest "
-                           f"or models/working_notebook/{{model}} (with --systems specified)")
+            print(f"      ❌ Failed - {result['error']}")
+    
+    # Calculate statistics
+    successful_results = [r for r in results if r["success"]]
+    success_rate = len(successful_results) / len(results) * 100
+    
+    if successful_results:
+        final_errors = [r["final_error"] for r in successful_results]
+        mean_error = np.mean(final_errors)
+        print(f"\n📊 Results:")
+        print(f"   Success rate: {success_rate:.1f}% ({len(successful_results)}/{len(results)})")
+        print(f"   Mean final error: {mean_error:.4f}")
+        print(f"   Error range: {min(final_errors):.4f} - {max(final_errors):.4f}")
         
-    
-    print(f"Loaded model trained on: {', '.join(trained_systems)}")
-    
-    # Setup chat template for inference
-    manager.setup_chat_template()
-    print("✅ Chat template configured")
-    
-    # Determine systems to evaluate
-    if args.systems:
-        eval_systems = [s.strip() for s in args.systems.split(",")]
-        # Check if all requested systems are available
-        for system in eval_systems:
-            if system not in AVAILABLE_SYSTEMS:
-                raise ValueError(f"Unknown system: {system}. Available: {AVAILABLE_SYSTEMS}")
+        # Plot trajectories
+        save_path = os.path.join(args.save_dir, "trajectories_notebook_style.png")
+        plot_count = plot_trajectories_notebook_style(results, save_path)
+        print(f"   Plotted {plot_count} successful trajectories")
+        
+        # Save detailed results
+        results_path = os.path.join(args.save_dir, "evaluation_results.json")
+        os.makedirs(args.save_dir, exist_ok=True)
+        
+        # Convert numpy arrays to lists for JSON serialization
+        json_results = []
+        for r in results:
+            json_result = r.copy()
+            for key in ["times", "positions", "velocities", "controls"]:
+                if key in json_result and json_result[key] is not None:
+                    json_result[key] = [float(x) for x in json_result[key]]
+            json_results.append(json_result)
+        
+        with open(results_path, 'w') as f:
+            json.dump({
+                "summary": {
+                    "success_rate": success_rate,
+                    "mean_error": mean_error,
+                    "num_cases": len(results),
+                    "successful_cases": len(successful_results)
+                },
+                "results": json_results
+            }, f, indent=2)
+        
+        print(f"   📄 Detailed results saved: {results_path}")
+        
     else:
-        eval_systems = trained_systems
-    
-    print(f"Evaluating on systems: {', '.join(eval_systems)}")
-    
-    # Run evaluation for each system
-    all_results = {}
-    all_metrics = {}
-    
-    for system_name in eval_systems:
-        print(f"\n{'='*70}")
-        print(f"EVALUATING ON {system_name.upper()}")
-        print('='*70)
+        print(f"\n❌ No successful results - all cases failed!")
         
-        # Generate test cases for this system
-        system = get_system(system_name)()
-        test_cases = []
-        
-        for _ in range(args.num_test_cases):
-            initial_state = system.generate_random_initial_state()
-            test_cases.append(tuple(initial_state))
-        
-        print(f"Generated {len(test_cases)} test cases")
-        
-        # Standard evaluation
-        if args.test_type in ["standard", "both"]:
-            print("Running standard inference...")
-            
-            from vllm import SamplingParams
-            sampling_params = SamplingParams(
-                temperature=args.temperature,
-                top_k=ALL_CONFIG["eval"]["sampling_params"]["top_k"],
-                max_tokens=ALL_CONFIG["eval"]["sampling_params"]["max_tokens"]
-            )
-            
-            standard_results = run_batch_inference(
-                model, tokenizer, system_name, test_cases,
-                lora_request=lora_request,
-                sampling_params=sampling_params
-            )
-            
-            # Compute metrics
-            standard_metrics = compute_batch_metrics(standard_results)
-            
-            all_results[f"{system_name}_standard"] = standard_results
-            all_metrics[f"{system_name}_standard"] = standard_metrics
-            
-            print(f"Standard evaluation results:")
-            print(f"  Success rate: {standard_metrics.get('success_rate', 0.0):.2%}")
-            print(f"  Mean performance: {standard_metrics.get('mean_performance_score', 0.0):.4f}")
-            print(f"  Mean final error: {standard_metrics.get('mean_final_error', 'N/A')}")
-        
-        # MPC evaluation
-        if args.test_type in ["mpc", "both"]:
-            print(f"Running MPC inference (horizon={args.mpc_horizon})...")
-            
-            mpc_results = []
-            for i, test_case in enumerate(test_cases):
-                print(f"  MPC test {i+1}/{len(test_cases)}")
-                
-                mpc_result = run_mpc_inference(
-                    model, tokenizer, system_name, test_case,
-                    dt=ALL_CONFIG["system"]["dt"],
-                    total_steps=ALL_CONFIG["system"]["steps"],
-                    horizon=args.mpc_horizon,
-                    lora_request=lora_request
-                )
-                mpc_results.append(mpc_result)
-            
-            all_results[f"{system_name}_mpc"] = mpc_results
-            
-            # Calculate MPC metrics
-            mpc_final_errors = [r["mpc_trajectory"]["final_error"] for r in mpc_results]
-            mpc_metrics = {
-                "mean_final_error": np.mean(mpc_final_errors),
-                "std_final_error": np.std(mpc_final_errors),
-                "median_final_error": np.median(mpc_final_errors),
-            }
-            all_metrics[f"{system_name}_mpc"] = mpc_metrics
-            
-            print(f"MPC evaluation results:")
-            print(f"  Mean final error: {mpc_metrics.get('mean_final_error', 0.0):.6f}")
-            print(f"  Std final error: {mpc_metrics.get('std_final_error', 0.0):.6f}")
-    
-    # Generate plots
-    if args.save_plots or args.show_plots or args.enhanced_plots:
-        print(f"\n{'='*70}")
-        print("GENERATING PLOTS")
-        print('='*70)
-        
-        os.makedirs(args.plot_dir, exist_ok=True)
-        
-        for key, results in all_results.items():
-            if "standard" in key:
-                system_name = key.replace('_standard', '')
-                
-                # Generate enhanced plots if requested (new main plotting option)
-                if args.enhanced_plots:
-                    print(f"Generating enhanced plots for {system_name}...")
-                    
-                    # Process results to create trajectory comparison data
-                    for i, result in enumerate(results[:3]):  # Limit to first 3 for clarity
-                        if result.get('valid_format', False):
-                            trajectories = {}
-                            
-                            # Add model trajectory
-                            if result.get('model_trajectory'):
-                                trajectories['Model'] = result['model_trajectory']
-                            
-                            # Add optimal trajectory for comparison if available
-                            if result.get('optimal_trajectory'):
-                                trajectories['Optimal'] = result['optimal_trajectory']
-                            
-                            initial_state = result.get('initial_state', (0, 0))
-                            
-                            if trajectories:
-                                # Generate enhanced 4-subplot comparison
-                                save_path = os.path.join(args.plot_dir, f"{system_name}_enhanced_case_{i+1}")
-                                
-                                # Determine if this is a comparison or model-only plot
-                                show_comparison = len(trajectories) > 1
-                                
-                                fig_enhanced = plot_control_comparison(
-                                    trajectories, system_name, initial_state,
-                                    save_path=save_path, show_comparison=show_comparison
-                                )
-                                
-                                if args.show_plots:
-                                    plt.show()
-                                else:
-                                    plt.close(fig_enhanced)
-                                
-                                print(f"Saved enhanced comparison for case {i+1}")
-                
-                # Skip all other plotting modes
-                
-                # Generate single comparison figure with all trajectories
-                if args.save_plots or args.show_plots:
-                    # Use simplified plotting function
-                    save_path = f"{args.plot_dir}/{key}_all_trajectories.png" if args.save_plots else None
-                    fig = plot_all_trajectories_comparison(results, system_name, save_path)
-                    
-                    if fig:
-                        if args.show_plots:
-                            plt.show()
-                        else:
-                            plt.close(fig)
-                    
-                    # Skip metrics comparison plot
-    
-    # Print summary
-    print(f"\n{'='*70}")
-    print("EVALUATION SUMMARY")
-    print('='*70)
-    
-    for key, metrics in all_metrics.items():
-        print(f"\n{key.upper()}:")
-        for metric_name, value in metrics.items():
-            if isinstance(value, float):
-                print(f"  {metric_name}: {value:.6f}")
-            else:
-                print(f"  {metric_name}: {value}")
-    
-    print(f"\nEvaluation completed for model: {args.model_path}")
-    if args.save_plots:
-        print(f"Plots saved to: {args.plot_dir}")
-
+    print(f"\n🎉 Evaluation completed!")
 
 if __name__ == "__main__":
     main()

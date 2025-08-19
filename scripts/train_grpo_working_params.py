@@ -161,7 +161,7 @@ Then provide exactly {current_steps} control values as a comma-separated list be
             per_device_train_batch_size=4,  # EXACT from notebook
             gradient_accumulation_steps=1,  # EXACT from notebook
             warmup_steps=5,                 # EXACT from notebook
-            num_train_epochs=1,             # EXACT from notebook
+            num_train_epochs=2,             # EXACT from notebook
             learning_rate=2e-4,             # EXACT from notebook
             logging_steps=5,                # EXACT from notebook
             optim="adamw_8bit",             # EXACT from notebook
@@ -230,11 +230,11 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         lr_scheduler_type="linear",
         optim="adamw_8bit",
         logging_steps=1,
-        per_device_train_batch_size=1,  # Will be changed to num_generations
+        per_device_train_batch_size=4,  # Will be changed to num_generations
         gradient_accumulation_steps=1,
         num_generations=4,
         max_completion_length=max_completion_length,
-        max_steps=10,
+        max_steps=100,
         save_steps=500,
         report_to="none",  # Disable wandb for now
         output_dir="./grpo_working_output",
