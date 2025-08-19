@@ -108,19 +108,24 @@ def load_model_notebook_style(model_path):
 
 def extract_controls_from_response(response, steps=50):
     """Extract control values from model response with improved error handling."""
+    print(f"🔍 DEBUG: Looking for <CONTROLS>...</CONTROLS> pattern...")
+    
     # Look for <CONTROLS>...</CONTROLS> pattern
     control_match = re.search(r"<CONTROLS>(.*?)</CONTROLS>", response, re.DOTALL)
     if not control_match:
+        print(f"❌ DEBUG: No <CONTROLS> tags found, trying fallback...")
         # Fallback for models that don't use the CONTROLS tag
         # Try to find a comma-separated list of floats at the end
         fallback_match = re.search(r"([\d\.\s,-]+)$", response)
         if fallback_match:
             control_text = fallback_match.group(1).strip()
+            print(f"✅ DEBUG: Found fallback pattern: '{control_text[:50]}...'")
         else:
-            print("❌ No control sequence found in response.")
+            print("❌ DEBUG: No control sequence found in response (no fallback pattern either)")
             return None
     else:
         control_text = control_match.group(1).strip()
+        print(f"✅ DEBUG: Found <CONTROLS> tags with content: '{control_text[:50]}...'")
     
     try:
         # Clean up the text: remove brackets, newlines, and extra spaces
@@ -202,15 +207,27 @@ def evaluate_single_case(model, tokenizer, lora_request, x0, v0, dt=0.1, steps=5
             lora_request=lora_request,
         )[0].outputs[0].text
         
-        # Extract controls
+        # Debug output: Show complete model response
+        print(f"\n📝 DEBUG: Complete model output for case ({x0:.4f}, {v0:.4f})")
+        print("=" * 80)
+        print(output)
+        print("=" * 80)
+        
+        # Extract controls with debug info
+        print(f"🔍 DEBUG: Extracting controls from response...")
         controls = extract_controls_from_response(output, steps)
         
         if controls is None:
+            print(f"❌ DEBUG: Control extraction failed!")
             return {
                 "success": False,
                 "error": "Failed to extract controls",
                 "response": output[:200] + "..." if len(output) > 200 else output
             }
+        else:
+            print(f"✅ DEBUG: Successfully extracted {len(controls)} controls")
+            print(f"🎯 DEBUG: First 5 controls: {controls[:5]}")
+            print(f"🎯 DEBUG: Last 5 controls: {controls[-5:]}")
         
         # Simulate trajectory
         times, positions, velocities = simulate_trajectory(x0, v0, controls, dt)
@@ -220,9 +237,24 @@ def evaluate_single_case(model, tokenizer, lora_request, x0, v0, dt=0.1, steps=5
         final_vel = velocities[-1]
         final_error = np.sqrt(final_pos**2 + final_vel**2)
         
+        # Debug trajectory results
+        print(f"🚀 DEBUG: Trajectory simulation results:")
+        print(f"   Initial state: pos={x0:.4f}, vel={v0:.4f}")
+        print(f"   Final state: pos={final_pos:.4f}, vel={final_vel:.4f}")
+        print(f"   Final error: {final_error:.4f}")
+        
         # Check constraints
         valid_controls = all(-3 <= u <= 3 for u in controls)
         valid_states = all(-1 <= p <= 1 and -1 <= v <= 1 for p, v in zip(positions, velocities))
+        
+        print(f"✅ DEBUG: Constraint validation:")
+        print(f"   Valid controls ([-3,3]): {valid_controls}")
+        print(f"   Valid states ([-1,1]): {valid_states}")
+        if not valid_controls:
+            invalid_controls = [u for u in controls if not (-3 <= u <= 3)]
+            print(f"   ⚠️ Invalid controls found: {invalid_controls[:3]}...")
+        if not valid_states:
+            print(f"   ⚠️ State constraint violations detected")
         
         return {
             "success": True,

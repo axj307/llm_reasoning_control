@@ -129,7 +129,7 @@ class UnslothAlignPropConfig(AlignPropConfig):
     )
     def __init__(
         self,
-        exp_name = 'evaluate_model',
+        exp_name = 'train_grpo_working_params',
         run_name = '',
         seed = 3407,
         log_with = None,
