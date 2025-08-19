@@ -131,9 +131,8 @@ def main():
     
     # Generate dataset name
     if args.dataset_name is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         systems_str = "_".join(systems)
-        dataset_name = f"{systems_str}_{train_samples}train_{eval_samples}eval_{timestamp}"
+        dataset_name = f"{systems_str}"
     else:
         dataset_name = args.dataset_name
     
@@ -173,6 +172,16 @@ def main():
         all_train_data.extend(train_data)
         all_eval_data.extend(eval_data)
         
+        # Save eval data in a simplified format for the notebook
+        simple_eval_data = [
+            {
+                "initial_state": d["initial_state"],
+                "trajectory": d["trajectory"],
+                "controls": d["controls"]
+            }
+            for d in eval_data
+        ]
+
         # Collect statistics
         dataset_info["system_stats"][system] = {
             "train_samples": len(train_data),
@@ -189,18 +198,22 @@ def main():
         # Save as pickle files
         train_file = output_dir / f"{dataset_name}_train.pkl"
         eval_file = output_dir / f"{dataset_name}_eval.pkl"
+        eval_full_file = output_dir / f"{dataset_name}_eval_full.pkl"
         info_file = output_dir / f"{dataset_name}_info.pkl"
         
         with open(train_file, 'wb') as f:
             pickle.dump(all_train_data, f)
         with open(eval_file, 'wb') as f:
+            pickle.dump(simple_eval_data, f)
+        with open(eval_full_file, 'wb') as f:
             pickle.dump(all_eval_data, f)
         with open(info_file, 'wb') as f:
             pickle.dump(dataset_info, f)
         
         print(f"   📦 Pickle format:")
         print(f"      Train: {train_file}")
-        print(f"      Eval:  {eval_file}")
+        print(f"      Eval (Simplified): {eval_file}")
+        print(f"      Eval (Full): {eval_full_file}")
         print(f"      Info:  {info_file}")
     
     if args.format in ["json", "both"]:

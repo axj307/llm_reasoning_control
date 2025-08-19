@@ -59,57 +59,86 @@ def load_model_notebook_style(model_path):
         lora_alpha=64,
         use_gradient_checkpointing="unsloth",
         random_state=3407,
+        use_rslora=True,
+        loftq_config=None,
     )
-    
-    # Set up chat template (simplified version from notebook)
+
+    # Set up chat template
+    # Use a flexible chat template - the one from the notebook is too rigid
+    # and can cause issues if the model's output format changes slightly.
     reasoning_start = "<REASONING>"
     system_prompt = get_system_prompt(0.1, 50)  # Default values
-    
-    chat_template = \
-        "{% if messages[0]['role'] == 'system' %}"\
-            "{{ messages[0]['content'] + eos_token }}"\
-            "{% set loop_messages = messages[1:] %}"\
-        "{% else %}"\
-            "{{ '{system_prompt}' + eos_token }}"\
-            "{% set loop_messages = messages %}"\
-        "{% endif %}"\
-        "{% for message in loop_messages %}"\
-            "{% if message['role'] == 'user' %}"\
-                "{{ message['content'] }}"\
-            "{% elif message['role'] == 'assistant' %}"\
-                "{{ message['content'] + eos_token }}"\
-            "{% endif %}"\
-        "{% endfor %}"\
-        "{% if add_generation_prompt %}{{ '{reasoning_start}' }}"\
+
+    chat_template = (
+        "{% if messages[0]['role'] == 'system' %}"
+            "{{ messages[0]['content'] + eos_token }}"
+            "{% set loop_messages = messages[1:] %}"
+        "{% else %}"
+            "{{ 'You are a helpful assistant' + eos_token }}"
+            "{% set loop_messages = messages %}"
         "{% endif %}"
-    
-    chat_template = chat_template\
-        .replace("'{system_prompt}'", f"'{system_prompt}'")\
-        .replace("'{reasoning_start}'", f"'{reasoning_start}'")
+        "{% for message in loop_messages %}"
+            "{% if message['role'] == 'user' %}"
+                "{{ message['content'] }}"
+            "{% elif message['role'] == 'assistant' %}"
+                "{{ message['content'] + eos_token }}"
+            "{% endif %}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}"
+        "{% endif %}"
+    )
+
     tokenizer.chat_template = chat_template
     
     # Load LoRA weights
-    lora_request = model.load_lora(model_path)
-    print(f"✅ Model loaded with LoRA from: {model_path}")
+    try:
+        lora_request = model.load_lora(model_path)
+        print(f"✅ Model loaded with LoRA from: {model_path}")
+    except Exception as e:
+        print(f"❌ Failed to load LoRA weights from {model_path}: {e}")
+        # Fallback to base model if LoRA fails
+        lora_request = None
     
     return model, tokenizer, lora_request
 
 def extract_controls_from_response(response, steps=50):
-    """Extract control values from model response."""
+    """Extract control values from model response with improved error handling."""
     # Look for <CONTROLS>...</CONTROLS> pattern
     control_match = re.search(r"<CONTROLS>(.*?)</CONTROLS>", response, re.DOTALL)
     if not control_match:
-        return None
+        # Fallback for models that don't use the CONTROLS tag
+        # Try to find a comma-separated list of floats at the end
+        fallback_match = re.search(r"([\d\.\s,-]+)$", response)
+        if fallback_match:
+            control_text = fallback_match.group(1).strip()
+        else:
+            print("❌ No control sequence found in response.")
+            return None
+    else:
+        control_text = control_match.group(1).strip()
     
     try:
-        control_text = control_match.group(1).strip()
-        controls = [float(x.strip()) for x in control_text.split(",")]
+        # Clean up the text: remove brackets, newlines, and extra spaces
+        control_text = control_text.replace("[", "").replace("]", "").replace("\n", " ")
+        controls = [float(x.strip()) for x in control_text.split(",") if x.strip()]
+        
         if len(controls) == steps:
             return controls
+        else:
+            print(f"⚠️  Warning: Expected {steps} controls, but found {len(controls)}.")
+            # Pad with zeros or truncate if necessary
+            if len(controls) > steps:
+                return controls[:steps]
+            else:
+                return controls + [0.0] * (steps - len(controls))
+                
+    except ValueError as e:
+        print(f"❌ Failed to parse controls due to ValueError: {e}")
+        print(f"   Raw control text: '{control_text}'")
+        return None
     except Exception as e:
-        print(f"Failed to parse controls: {e}")
-        
-    return None
+        print(f"❌ An unexpected error occurred during control parsing: {e}")
+        return None
 
 def simulate_trajectory(x0, v0, controls, dt=0.1):
     """Simulate double integrator trajectory."""

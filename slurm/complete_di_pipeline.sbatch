@@ -70,7 +70,7 @@ echo "🚀 PHASE 2: SFT + GRPO TRAINING"
 echo "============================================================"
 
 echo "🔧 Training SFT + GRPO model using working parameters..."
-python scripts/train_grpo_working_params.py
+python scripts/train_grpo_working_params.py --max-steps 10
 
 # Check if GRPO completed successfully
 if [ -d "models/single_system/double_integrator/grpo/latest" ]; then
@@ -180,6 +180,8 @@ try:
     plt.close()
     print('✅ LQR reference solutions plot saved')
 
+except FileNotFoundError:
+    print(f'⚠️  Could not create LQR reference plot: double_integrator_eval.pkl not found')
 except Exception as e:
     print(f'⚠️  Could not create LQR reference plot: {e}')
 

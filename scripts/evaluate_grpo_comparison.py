@@ -66,11 +66,8 @@ def main():
             cmd = [
                 "python", "scripts/evaluate_model.py",
                 "--model-path", model_info["path"],
-                "--model-type", model_info["type"],
-                "--systems", "double_integrator",
-                "--eval-data-file", test_file,
-                "--num-test-cases", "5",
-                "--save-plots"
+                "--num-cases", "5",
+                "--save-dir", f"temp_comparison_{model_info['name']}"
             ]
             
             result = run(cmd, capture_output=True, text=True, cwd=".")
