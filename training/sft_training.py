@@ -83,36 +83,15 @@ def train_sft_model(model_manager: UniversalModelManager,
         )
         print("✅ Chat template set up successfully")
     
-    # Prepare datasets for SFT training - match working notebook format exactly
+    # Prepare datasets for SFT training - EXACT notebook approach
     def format_for_sft(example):
-        """Format a single example for SFT training - match working notebook approach."""
-        # Use Messages field (capital M) like the notebook
-        messages = example.get("Messages", example.get("messages", []))
-        
-        # Apply chat template to create training text
-        # Make sure we include the full conversation with assistant response
-        try:
-            text = model_manager.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=False  # Include the full conversation including assistant
-            )
-        except Exception as e:
-            print(f"Warning: Chat template failed for example, using fallback: {e}")
-            # Fallback: manual formatting matching working notebook
-            text = ""
-            for msg in messages:
-                if msg["role"] == "system":
-                    text += msg["content"] + model_manager.tokenizer.eos_token
-                elif msg["role"] == "user":
-                    text += msg["content"]
-                elif msg["role"] == "assistant":
-                    text += msg["content"] + model_manager.tokenizer.eos_token
-        
-        return {
-            "text": text,
-            "system_type": example.get("system_type", "unknown"),
-        }
+        """Format a single example for SFT training - EXACT working notebook approach."""
+        # EXACT copy from working notebook:
+        full_text = model_manager.tokenizer.apply_chat_template(
+            example["Messages"],
+            tokenize=False
+        )
+        return {"text": full_text}
     
     # Convert to HuggingFace format
     train_dataset = Dataset.from_list(train_data)

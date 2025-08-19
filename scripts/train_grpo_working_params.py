@@ -118,8 +118,9 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     from datasets import Dataset
     control_dataset = Dataset.from_list(control_data)
     
-    # Format dataset for SFT pre-training (from notebook)
+    # Format dataset for SFT pre-training (EXACT from notebook)
     def format_for_sft(example):
+        # EXACT copy from working notebook:
         full_text = tokenizer.apply_chat_template(
             example["Messages"],
             tokenize=False
@@ -139,20 +140,19 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         train_dataset=control_dataset,
         args=SFTConfig(
             dataset_text_field="text",
-            per_device_train_batch_size=4,  # From notebook
-            gradient_accumulation_steps=1,
-            warmup_steps=5,
-            num_train_epochs=2,
-            learning_rate=2e-4,
-            logging_steps=5,
-            optim="adamw_8bit",
-            weight_decay=0.01,
-            lr_scheduler_type="linear",
-            seed=3407,
-            report_to="none",  # Disable wandb for now
+            per_device_train_batch_size=4,  # EXACT from notebook
+            gradient_accumulation_steps=1,  # EXACT from notebook
+            warmup_steps=5,                 # EXACT from notebook
+            num_train_epochs=2,             # EXACT from notebook
+            learning_rate=2e-4,             # EXACT from notebook
+            logging_steps=5,                # EXACT from notebook
+            optim="adamw_8bit",             # EXACT from notebook
+            weight_decay=0.01,              # EXACT from notebook
+            lr_scheduler_type="linear",     # EXACT from notebook
+            seed=3407,                      # EXACT from notebook
+            report_to="wandb",              # EXACT from notebook (but disable for cluster)
             output_dir="./sft_pretraining_output",
-            dataloader_num_workers=0,  # Disable multiprocessing
-            max_seq_length=2048,  # Set max length
+            dataloader_num_workers=0,      # Keep disabled for cluster stability
         ),
     )
     

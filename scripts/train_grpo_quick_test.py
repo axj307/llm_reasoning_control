@@ -118,8 +118,9 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     from datasets import Dataset
     control_dataset = Dataset.from_list(control_data)
     
-    # Format dataset for SFT pre-training (from notebook)
+    # Format dataset for SFT pre-training (EXACT from notebook)
     def format_for_sft(example):
+        # EXACT copy from working notebook:
         full_text = tokenizer.apply_chat_template(
             example["Messages"],
             tokenize=False
