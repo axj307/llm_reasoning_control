@@ -1,0 +1,69 @@
+# Van der Pol Oscillator Environment Configuration
+# System: ẍ - μ(1-x²)ẋ + x = u
+
+environment:
+  name: "van_der_pol"
+  description: "Van der Pol oscillator with nonlinear dynamics"
+  
+  # System dynamics: ẍ - μ(1-x²)ẋ + x = u
+  # State: [position, velocity] 
+  # Control: force input (u)
+  
+  # State bounds: [position_bounds, velocity_bounds]
+  state_bounds:
+    - [-2.0, 2.0]  # Position bounds
+    - [-2.0, 2.0]  # Velocity bounds
+  
+  # Control bounds
+  control_bounds: [-5.0, 5.0]  # Force bounds
+  
+  # Initial condition sampling bounds
+  initial_bounds:
+    - [-1.5, 1.5]  # Initial position
+    - [-1.5, 1.5]  # Initial velocity
+  
+  # Van der Pol parameter
+  mu: 1.0  # Damping parameter
+  
+  # Solver configuration for nonlinear optimization
+  solver_config:
+    Q: [10.0, 5.0]  # State weights [position, velocity]
+    R: 0.1          # Control weight
+    maxiter: 1000   # Maximum solver iterations
+
+# Environment-specific training overrides
+training:
+  # Van der Pol needs different training settings due to nonlinearity
+  sft:
+    # More epochs due to complexity
+    num_train_epochs: 8
+    learning_rate: 1e-5  # Lower learning rate for stability
+    warmup_ratio: 0.1    # More gradual warmup
+  grpo:
+    # More GRPO steps for nonlinear system convergence
+    max_steps: 200
+    learning_rate: 5e-7  # Much lower learning rate for GRPO
+    # Improved reward weights for VDP
+    reward_config:
+      final_error_weight: 20.0     # Increased weight on final accuracy
+      trajectory_weight: 5.0       # Moderate weight on trajectory quality
+      control_effort_weight: 0.5   # Lower weight on control effort
+      constraint_weight: 10.0      # High weight on staying in bounds
+
+# Environment-specific data generation
+data:
+  # Van der Pol needs more samples due to nonlinearity
+  samples_per_training: 600  # Increased sample count
+  # Add more diverse initial conditions for nonlinear system
+  diverse_sampling: true
+  # Better initial condition distribution
+  initial_condition_strategy: "stratified"  # Ensure good coverage of state space
+
+# VDP-specific evaluation parameters
+eval:
+  sampling_params:
+    temperature: 0.3      # Lower temperature for more deterministic output
+    top_k: 30            # Reduced top_k for more focused sampling
+    max_tokens: 1024
+  # More test cases for better statistics
+  num_test_cases: 20
