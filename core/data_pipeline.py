@@ -24,6 +24,7 @@ except ImportError:
 
 from environments import get_system, list_systems
 from .solvers import get_solver
+from .solvers.lqr_solver import compute_lqr_cost
 
 
 class UniversalDataGenerator:
@@ -77,6 +78,11 @@ class UniversalDataGenerator:
             # Solve for optimal control
             controls = solver(initial_state, self.dt, self.steps)
             
+            # Simulate trajectory from optimal controls
+            trajectory, lqr_cost, final_error = self._simulate_trajectory_with_metrics(
+                system, initial_state, controls
+            )
+            
             # Generate reasoning text
             reasoning = self._generate_reasoning(system_name, initial_state, controls)
             
@@ -92,6 +98,9 @@ class UniversalDataGenerator:
                 "system_type": system_name,
                 "initial_state": initial_state.tolist(),
                 "controls": controls,
+                "trajectory": trajectory,  # Full state trajectory from optimal controls
+                "lqr_cost": lqr_cost,     # LQR cost for this trajectory
+                "final_error": final_error, # Final distance from origin
                 "system_prompt": system_prompt,
                 "problem": problem,
                 "reasoning": reasoning,
@@ -111,6 +120,64 @@ class UniversalDataGenerator:
             data.append(data_entry)
         
         return data
+    
+    def _simulate_trajectory_with_metrics(self, system, initial_state: np.ndarray, 
+                                        controls: List[float]) -> Tuple[List[List[float]], float, float]:
+        """
+        Simulate trajectory and compute LQR cost and metrics.
+        
+        Args:
+            system: Environment instance with simulate_step method
+            initial_state: Initial state [x0, v0]
+            controls: List of control inputs
+            
+        Returns:
+            trajectory: List of states [[x0, v0], [x1, v1], ...]
+            lqr_cost: Total LQR cost for this trajectory
+            final_error: Final distance from origin
+        """
+        # Simulate trajectory
+        trajectory = [initial_state.tolist()]
+        state = initial_state.copy()
+        
+        for control in controls:
+            # Apply control bounds (should already be satisfied by solver, but safety)
+            u_min, u_max = system.get_control_bounds()
+            control = max(u_min, min(u_max, control))
+            
+            # Simulate one step
+            state = system.simulate_step(state, control)
+            
+            # Apply state bounds (though LQR should keep within bounds)
+            state_bounds = system.get_state_bounds()
+            for i, (s_min, s_max) in enumerate(state_bounds):
+                state[i] = max(s_min, min(s_max, state[i]))
+            
+            trajectory.append(state.tolist())
+        
+        # Calculate LQR cost (only for double integrator for now)
+        if system.name == "double_integrator":
+            # LQR parameters (matching lqr_solver.py)
+            Q = np.array([[10.0, 0.0], [0.0, 10.0]])
+            R = 0.1
+            
+            # Convert trajectory to state arrays for cost calculation
+            states = [np.array(s).reshape(-1, 1) for s in trajectory]
+            lqr_cost = compute_lqr_cost(states, controls, Q, R)
+        else:
+            # For other systems, use a simple quadratic cost
+            lqr_cost = 0.0
+            for state, control in zip(trajectory[:-1], controls):
+                lqr_cost += np.sum(np.array(state)**2) + 0.1 * control**2
+            # Add final state cost
+            final_state = trajectory[-1]
+            lqr_cost += np.sum(np.array(final_state)**2)
+        
+        # Calculate final error (distance from origin)
+        final_state = trajectory[-1]
+        final_error = np.sqrt(sum(x**2 for x in final_state))
+        
+        return trajectory, float(lqr_cost), float(final_error)
     
     def generate_universal_dataset(self, samples_per_system: int = 200) -> List[Dict[str, Any]]:
         """Generate data for all configured systems."""

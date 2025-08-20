@@ -70,7 +70,7 @@ echo "🚀 PHASE 2: SFT + GRPO TRAINING"
 echo "============================================================"
 
 echo "🔧 Training SFT + GRPO model using working parameters..."
-python scripts/train_grpo_working_params.py --max-steps 10
+python scripts/train_grpo_working_params.py --max-steps 100
 
 # Check if GRPO completed successfully
 if [ -d "models/single_system/double_integrator/grpo/latest" ]; then
@@ -79,6 +79,37 @@ if [ -d "models/single_system/double_integrator/grpo/latest" ]; then
 else
     echo "❌ SFT + GRPO training failed"
     GRPO_MODEL=""
+fi
+
+# PHASE 2.5: TRAINING PROGRESS VISUALIZATION
+echo ""
+echo "📊 PHASE 2.5: TRAINING PROGRESS VISUALIZATION"
+echo "============================================================"
+
+# Generate training plots automatically after training
+echo "🎨 Generating training progress plots..."
+
+# Look for wandb logs in the current directory
+if [ -d "wandb" ]; then
+    echo "📊 Found wandb logs, generating GRPO training plots..."
+    python scripts/plot_training_progress.py \
+        --wandb-dir wandb \
+        --save-dir "$OUTPUT_DIR/training_progress" \
+        --training-type "GRPO"
+    echo "✅ GRPO training plots saved to: $OUTPUT_DIR/training_progress/"
+else
+    echo "⚠️  No wandb directory found, skipping training plot generation"
+    echo "💡 To enable automatic training plots, ensure wandb logging is enabled in training script"
+fi
+
+# Also check for SFT-specific wandb logs if they exist separately
+if [ -d "sft_wandb" ]; then
+    echo "📊 Found SFT wandb logs, generating SFT training plots..."
+    python scripts/plot_training_progress.py \
+        --wandb-dir sft_wandb \
+        --save-dir "$OUTPUT_DIR/training_progress" \
+        --training-type "SFT"
+    echo "✅ SFT training plots saved to: $OUTPUT_DIR/training_progress/"
 fi
 
 # PHASE 3: MODEL EVALUATION
@@ -97,9 +128,11 @@ else
     echo "⚠️  SFT model not found, skipping SFT evaluation"
 fi
 
-# Evaluate GRPO model using notebook-style approach (if available)
+# Evaluate GRPO model using both standard and MPC approaches (if available)
 if [ -n "$GRPO_MODEL" ] && [ -d "$GRPO_MODEL" ]; then
-    echo "🧪 Evaluating GRPO model..."
+    echo "🧪 Evaluating GRPO model (Standard + MPC)..."
+    echo "   📊 Standard: Full horizon planning"
+    echo "   🎯 MPC: Step-by-step horizon=10 planning"
     python scripts/evaluate_model.py \
         --model-path "$GRPO_MODEL" \
         --num-cases 10 \
@@ -158,13 +191,14 @@ try:
         col = i % 2
         
         initial_state = data['initial_state']
-        trajectory = data['trajectory']
+        trajectory = data['trajectory']  # Now using stored trajectory
         controls = data['controls']
+        dt = 0.1
         
-        # Extract positions and velocities
+        # Extract positions and velocities from stored trajectory
         positions = [state[0] for state in trajectory]
         velocities = [state[1] for state in trajectory]
-        times = np.arange(len(positions)) * 0.1
+        times = np.arange(len(positions)) * dt
         
         axes[row, col].plot(times, positions, 'b-', label='Position', linewidth=2)
         axes[row, col].plot(times, velocities, 'r-', label='Velocity', linewidth=2)
@@ -252,10 +286,11 @@ This report contains the complete training and evaluation results for the double
 1. ✅ **Data Generation**: 1000 training samples, 100 evaluation samples
 2. ✅ **SFT Training**: Supervised fine-tuning with LoRA rank 32
 3. ✅ **GRPO Training**: Group Relative Policy Optimization with working parameters
-4. ✅ **Model Evaluation**: Comprehensive testing on 10 test cases per model
-5. ✅ **Comparative Analysis**: Direct SFT vs GRPO comparison
-6. ✅ **Figure Generation**: Publication-ready plots and analysis
-7. ✅ **Report Generation**: This comprehensive report
+4. ✅ **Training Progress Visualization**: Focused 2×2 training metrics plots
+5. ✅ **Model Evaluation**: Comprehensive testing on 10 test cases per model
+6. ✅ **Comparative Analysis**: Direct SFT vs GRPO comparison
+7. ✅ **Figure Generation**: Publication-ready plots and analysis
+8. ✅ **Report Generation**: This comprehensive report
 
 ## Key Results
 
@@ -266,6 +301,9 @@ This report contains the complete training and evaluation results for the double
 
 ## Files Generated
 
+- \`training_progress/\`: Training progress visualization
+  - \`grpo_progress.png\`: GRPO training metrics (focused 2×2 layout)
+  - \`sft_progress.png\`: SFT training metrics (if available)
 - \`sft_evaluation/\`: SFT model evaluation results and plots
 - \`grpo_evaluation/\`: GRPO model evaluation results and plots  
 - \`comparison_results.txt\`: Direct model comparison analysis
@@ -300,8 +338,15 @@ echo "📁 All results saved to: $OUTPUT_DIR"
 echo "📊 Key files generated:"
 echo "   - pipeline_report.md: Complete summary"
 echo "   - comparison_results.txt: Model comparison"  
+echo "   - training_progress/: Training progress visualization"
+echo "     └── grpo_progress.png: GRPO training metrics (focused 2x2)"
+echo "     └── sft_progress.png: SFT training metrics (if available)"
 echo "   - sft_evaluation/: SFT model results and plots"
-echo "   - grpo_evaluation/: GRPO model results and plots"
+echo "   - grpo_evaluation/: GRPO model results and plots (Standard + MPC)"
+echo "     └── trajectories_standard.png: Full horizon trajectories"
+echo "     └── trajectories_mpc.png: MPC step-by-step trajectories"
+echo "     └── evaluation_results.json: Standard evaluation results"
+echo "     └── evaluation_results_mpc.json: MPC evaluation results"
 echo "   - lqr_reference_solutions.png: LQR reference trajectories"
 echo "   - model_performance_summary.png: Performance comparison chart"
 echo ""

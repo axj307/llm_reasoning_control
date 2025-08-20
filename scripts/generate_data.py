@@ -177,7 +177,9 @@ def main():
             {
                 "initial_state": d["initial_state"],
                 "trajectory": d["trajectory"],
-                "controls": d["controls"]
+                "controls": d["controls"],
+                "lqr_cost": d["lqr_cost"],
+                "final_error": d["final_error"]
             }
             for d in eval_data
         ]

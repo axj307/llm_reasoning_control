@@ -173,6 +173,138 @@ def simulate_trajectory(x0, v0, controls, dt=0.1):
     
     return times, positions, velocities
 
+def evaluate_single_case_mpc(model, tokenizer, lora_request, x0, v0, dt=0.1, total_steps=50, mpc_horizon=10):
+    """
+    Evaluate model using MPC-style control - step by step horizon planning.
+    
+    Args:
+        model, tokenizer, lora_request: Model components
+        x0, v0: Initial state
+        dt: Time step
+        total_steps: Total control steps
+        mpc_horizon: Planning horizon for each MPC step
+        
+    Returns:
+        Dictionary with MPC trajectory results
+    """
+    print(f"🎯 MPC Evaluation: Initial ({x0:.4f}, {v0:.4f}), Horizon={mpc_horizon}")
+    
+    # Initialize state and trajectory
+    current_state = [x0, v0]
+    mpc_trajectory = [current_state.copy()]
+    mpc_controls = []
+    mpc_step_details = []
+    
+    for step in range(0, total_steps, mpc_horizon):
+        remaining_steps = min(mpc_horizon, total_steps - step)
+        remaining_time = remaining_steps * dt
+        
+        print(f"  Step {step}-{step+remaining_steps-1}: State=[{current_state[0]:.4f}, {current_state[1]:.4f}]")
+        
+        # Create MPC prompt for current state and remaining horizon
+        system_prompt = get_system_prompt(dt, remaining_steps)
+        test_prompt = (f"Control a double integrator system with initial state "
+                      f"[position={current_state[0]:.4f}, velocity={current_state[1]:.4f}] "
+                      f"to reach the origin (0,0) in {remaining_time:.2f} seconds using {remaining_steps} steps. "
+                      f"Ensure all states remain within [-1,1] and controls within [-3,3].")
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": test_prompt},
+        ]
+        
+        # Apply chat template
+        text = tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+        
+        # Generate controls for this horizon
+        sampling_params = SamplingParams(
+            temperature=0.7,
+            top_k=50,
+            max_tokens=1024,
+        )
+        
+        try:
+            output = model.fast_generate(
+                text,
+                sampling_params=sampling_params,
+                lora_request=lora_request,
+            )[0].outputs[0].text
+            
+            # Extract controls for this horizon
+            horizon_controls = extract_controls_from_response(output, remaining_steps)
+            
+            if horizon_controls is None:
+                print(f"    ❌ Failed to extract controls at step {step}")
+                return {
+                    "success": False,
+                    "error": f"MPC control extraction failed at step {step}",
+                    "mpc_trajectory": mpc_trajectory,
+                    "mpc_controls": mpc_controls,
+                    "step_details": mpc_step_details
+                }
+            
+            # Apply only the first control (MPC principle)
+            first_control = horizon_controls[0]
+            mpc_controls.append(first_control)
+            
+            # Store step details for analysis
+            step_detail = {
+                "step": step,
+                "state_before": current_state.copy(),
+                "planned_controls": horizon_controls,
+                "applied_control": first_control,
+                "remaining_steps": remaining_steps
+            }
+            mpc_step_details.append(step_detail)
+            
+            print(f"    ✅ Planned {len(horizon_controls)} controls, applied first: {first_control:.3f}")
+            
+            # Simulate one step forward
+            x, v = current_state
+            v = v + first_control * dt
+            x = x + v * dt
+            
+            # Apply bounds
+            x = max(-1.0, min(1.0, x))
+            v = max(-1.0, min(1.0, v))
+            
+            current_state = [x, v]
+            mpc_trajectory.append(current_state.copy())
+            
+            # Break if we've completed all steps
+            if step + 1 >= total_steps:
+                break
+                
+        except Exception as e:
+            print(f"    ❌ MPC step {step} failed: {e}")
+            return {
+                "success": False,
+                "error": f"MPC step {step} failed: {str(e)}",
+                "mpc_trajectory": mpc_trajectory,
+                "mpc_controls": mpc_controls,
+                "step_details": mpc_step_details
+            }
+    
+    # Calculate final metrics
+    final_state = mpc_trajectory[-1]
+    final_error = np.sqrt(final_state[0]**2 + final_state[1]**2)
+    
+    print(f"  🏁 MPC Final: [{final_state[0]:.4f}, {final_state[1]:.4f}], Error: {final_error:.4f}")
+    
+    return {
+        "success": True,
+        "mpc_trajectory": mpc_trajectory,
+        "mpc_controls": mpc_controls,
+        "final_error": final_error,
+        "step_details": mpc_step_details,
+        "mpc_horizon": mpc_horizon,
+        "total_steps": len(mpc_controls)
+    }
+
 def evaluate_single_case(model, tokenizer, lora_request, x0, v0, dt=0.1, steps=50):
     """Evaluate model on a single test case - notebook style."""
     total_time = dt * steps
@@ -275,61 +407,237 @@ def evaluate_single_case(model, tokenizer, lora_request, x0, v0, dt=0.1, steps=5
             "response": ""
         }
 
-def plot_trajectories_notebook_style(results, save_path=None):
-    """Plot trajectories exactly like the notebook."""
-    plt.style.use('default')
+def plot_mpc_trajectories(mpc_results, save_path=None, trajectory_color='#2E86AB'):
+    """Plot MPC trajectories in professional 2x2 layout with phase space."""
+    # Set professional style with larger fonts and tick sizes
+    plt.style.use('seaborn-v0_8-whitegrid')
     plt.rcParams.update({
-        'font.size': 12,
-        'axes.labelsize': 14,
-        'axes.titlesize': 16,
-        'xtick.labelsize': 12,
-        'ytick.labelsize': 12,
-        'legend.fontsize': 10,
-        'figure.titlesize': 18
+        'font.size': 20,
+        'axes.labelsize': 24,
+        'axes.titlesize': 26,
+        'xtick.labelsize': 20,
+        'ytick.labelsize': 20,
+        'xtick.major.size': 8,
+        'ytick.major.size': 8,
+        'xtick.major.width': 2,
+        'ytick.major.width': 2,
+        'legend.fontsize': 18,
+        'figure.titlesize': 28,
+        'lines.linewidth': 3.0,
+        'lines.markersize': 7,
+        'axes.grid': True,
+        'grid.alpha': 0.3,
+        'axes.axisbelow': True
     })
     
-    fig, axes = plt.subplots(3, 1, figsize=(12, 12))
-    fig.suptitle('Double Integrator: Model Generated Trajectories', fontsize=16)
+    successful_mpc = [r for r in mpc_results if r["success"]]
+    if not successful_mpc:
+        print("No successful MPC results to plot")
+        return 0
     
-    success_count = 0
-    for idx, result in enumerate(results):
-        if not result["success"]:
-            continue
-            
-        success_count += 1
-        label = f'Case {idx+1} (err={result["final_error"]:.3f})'
+    # Create 2x2 subplot layout
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    for i, result in enumerate(successful_mpc):
+        trajectory = result["mpc_trajectory"]
+        controls = result["mpc_controls"]
         
-        # Position plot
-        axes[0].plot(result["times"], result["positions"], 'o-', label=label, alpha=0.7)
+        positions = [state[0] for state in trajectory]
+        velocities = [state[1] for state in trajectory]
         
-        # Velocity plot  
-        axes[1].plot(result["times"], result["velocities"], 'o-', label=label, alpha=0.7)
+        # Times for states (n+1 points) and controls (n points)
+        state_times = np.arange(len(positions)) * 0.1
+        control_times = np.arange(len(controls)) * 0.1
         
-        # Control plot
-        axes[2].step(result["times"][:-1], result["controls"], where='post', label=label, alpha=0.7)
+        # Use consistent color for all trajectories
+        color = trajectory_color
+        
+        # Phase Space Plot (top-left)
+        axes[0,0].plot(positions, velocities, 'o-', color=color, 
+                      alpha=0.7, linewidth=3, markersize=5)
+        axes[0,0].plot(positions[0], velocities[0], 'o', color=color, markersize=10, 
+                      markeredgecolor='black', markeredgewidth=2)  # Start point
+        axes[0,0].plot(positions[-1], velocities[-1], 's', color=color, markersize=10, 
+                      markeredgecolor='black', markeredgewidth=2)  # End point
+        
+        # Position vs Time (top-right)
+        axes[0,1].plot(state_times, positions, 'o-', color=color, 
+                      alpha=0.7, linewidth=3, markersize=5)
+        
+        # Velocity vs Time (bottom-left)
+        axes[1,0].plot(state_times, velocities, 'o-', color=color, 
+                      alpha=0.7, linewidth=3, markersize=5)
+        
+        # Control vs Time (bottom-right)
+        axes[1,1].step(control_times, controls, where='post', color=color, 
+                      alpha=0.7, linewidth=3)
+
+    # Configure Phase Space Plot (top-left) - NO TITLE, NO LEGEND
+    axes[0,0].set_xlabel('Position', fontweight='bold')
+    axes[0,0].set_ylabel('Velocity', fontweight='bold')
+    axes[0,0].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[0,0].axvline(x=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[0,0].plot(0, 0, 'r*', markersize=15, markeredgecolor='darkred', markeredgewidth=2)  # Target
+    # Constraint boundaries
+    axes[0,0].axhspan(-1, 1, alpha=0.1, color='gray')
+    axes[0,0].axvspan(-1, 1, alpha=0.1, color='gray')
+    axes[0,0].set_xlim(-1.1, 1.1)
+    axes[0,0].set_ylim(-1.1, 1.1)
+    axes[0,0].grid(True, alpha=0.3)
     
-    # Configure plots
-    for ax in axes:
-        ax.axhline(y=0, color='r', linestyle='--', alpha=0.5)
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+    # Configure Position Plot (top-right) - NO TITLE, NO LEGEND
+    axes[0,1].set_xlabel('Time (s)', fontweight='bold')
+    axes[0,1].set_ylabel('Position', fontweight='bold')
+    axes[0,1].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[0,1].axhspan(-1, 1, alpha=0.1, color='gray')
+    axes[0,1].set_ylim(-1.1, 1.1)
+    axes[0,1].grid(True, alpha=0.3)
     
-    axes[0].set_ylabel('Position')
-    axes[0].set_ylim(-1.1, 1.1)
+    # Configure Velocity Plot (bottom-left) - NO TITLE, NO LEGEND
+    axes[1,0].set_xlabel('Time (s)', fontweight='bold')
+    axes[1,0].set_ylabel('Velocity', fontweight='bold')
+    axes[1,0].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[1,0].axhspan(-1, 1, alpha=0.1, color='gray')
+    axes[1,0].set_ylim(-1.1, 1.1)
+    axes[1,0].grid(True, alpha=0.3)
     
-    axes[1].set_ylabel('Velocity')  
-    axes[1].set_ylim(-1.1, 1.1)
+    # Configure Control Plot (bottom-right) - NO TITLE, NO LEGEND
+    axes[1,1].set_xlabel('Time (s)', fontweight='bold')
+    axes[1,1].set_ylabel('Control Input', fontweight='bold')
+    axes[1,1].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    # Control constraint bounds
+    axes[1,1].axhline(y=3, color='red', linestyle=':', alpha=0.8, linewidth=2)
+    axes[1,1].axhline(y=-3, color='red', linestyle=':', alpha=0.8, linewidth=2)
+    axes[1,1].axhspan(-3, 3, alpha=0.1, color='gray')
+    axes[1,1].set_ylim(-3.2, 3.2)
+    axes[1,1].grid(True, alpha=0.3)
     
-    axes[2].set_ylabel('Control Input')
-    axes[2].set_xlabel('Time (s)')
-    axes[2].set_ylim(-3.1, 3.1)
-    
+    # Adjust layout for clean appearance
     plt.tight_layout()
+    plt.subplots_adjust(hspace=0.3, wspace=0.3)
     
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Trajectory plot saved: {save_path}")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white', 
+                   edgecolor='none', format='png')
+        print(f"✅ Clean MPC trajectory plot saved: {save_path}")
+    
+    plt.close()
+    return len(successful_mpc)
+
+def plot_trajectories_notebook_style(results, save_path=None, trajectory_color='#A23B72'):
+    """Plot standard trajectories in professional 2x2 layout with phase space."""
+    # Set professional style with larger fonts
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.rcParams.update({
+        'font.size': 20,
+        'axes.labelsize': 24,
+        'axes.titlesize': 26,
+        'xtick.labelsize': 20,
+        'ytick.labelsize': 20,
+        'xtick.major.size': 8,
+        'ytick.major.size': 8,
+        'xtick.major.width': 2,
+        'ytick.major.width': 2,
+        'legend.fontsize': 18,
+        'figure.titlesize': 28,
+        'lines.linewidth': 3.0,
+        'lines.markersize': 7,
+        'axes.grid': True,
+        'grid.alpha': 0.3,
+        'axes.axisbelow': True
+    })
+    
+    # Filter successful results
+    successful_results = [r for r in results if r["success"]]
+    if not successful_results:
+        print("No successful results to plot")
+        return 0
+    
+    # Create 2x2 subplot layout
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    
+    success_count = 0
+    for idx, result in enumerate(successful_results):
+        success_count += 1
+        
+        # Use consistent color for all trajectories
+        color = trajectory_color
+        
+        positions = result["positions"]
+        velocities = result["velocities"]
+        times = result["times"]
+        controls = result["controls"]
+        
+        # Phase Space Plot (top-left)
+        axes[0,0].plot(positions, velocities, 'o-', color=color, 
+                      alpha=0.7, linewidth=3, markersize=5)
+        axes[0,0].plot(positions[0], velocities[0], 'o', color=color, markersize=10, 
+                      markeredgecolor='black', markeredgewidth=2)  # Start point
+        axes[0,0].plot(positions[-1], velocities[-1], 's', color=color, markersize=10, 
+                      markeredgecolor='black', markeredgewidth=2)  # End point
+        
+        # Position vs Time (top-right)
+        axes[0,1].plot(times, positions, 'o-', color=color, 
+                      alpha=0.7, linewidth=3, markersize=5)
+        
+        # Velocity vs Time (bottom-left)
+        axes[1,0].plot(times, velocities, 'o-', color=color, 
+                      alpha=0.7, linewidth=3, markersize=5)
+        
+        # Control vs Time (bottom-right)
+        axes[1,1].step(times[:-1], controls, where='post', color=color, 
+                      alpha=0.7, linewidth=3)
+
+    # Configure Phase Space Plot (top-left) - NO TITLE, NO LEGEND
+    axes[0,0].set_xlabel('Position', fontweight='bold')
+    axes[0,0].set_ylabel('Velocity', fontweight='bold')
+    axes[0,0].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[0,0].axvline(x=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[0,0].plot(0, 0, 'r*', markersize=15, markeredgecolor='darkred', markeredgewidth=2)  # Target
+    # Constraint boundaries
+    axes[0,0].axhspan(-1, 1, alpha=0.1, color='gray')
+    axes[0,0].axvspan(-1, 1, alpha=0.1, color='gray')
+    axes[0,0].set_xlim(-1.1, 1.1)
+    axes[0,0].set_ylim(-1.1, 1.1)
+    axes[0,0].grid(True, alpha=0.3)
+    
+    # Configure Position Plot (top-right) - NO TITLE, NO LEGEND
+    axes[0,1].set_xlabel('Time (s)', fontweight='bold')
+    axes[0,1].set_ylabel('Position', fontweight='bold')
+    axes[0,1].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[0,1].axhspan(-1, 1, alpha=0.1, color='gray')
+    axes[0,1].set_ylim(-1.1, 1.1)
+    axes[0,1].grid(True, alpha=0.3)
+    
+    # Configure Velocity Plot (bottom-left) - NO TITLE, NO LEGEND
+    axes[1,0].set_xlabel('Time (s)', fontweight='bold')
+    axes[1,0].set_ylabel('Velocity', fontweight='bold')
+    axes[1,0].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    axes[1,0].axhspan(-1, 1, alpha=0.1, color='gray')
+    axes[1,0].set_ylim(-1.1, 1.1)
+    axes[1,0].grid(True, alpha=0.3)
+    
+    # Configure Control Plot (bottom-right) - NO TITLE, NO LEGEND
+    axes[1,1].set_xlabel('Time (s)', fontweight='bold')
+    axes[1,1].set_ylabel('Control Input', fontweight='bold')
+    axes[1,1].axhline(y=0, color='red', linestyle='--', alpha=0.6, linewidth=2)
+    # Control constraint bounds
+    axes[1,1].axhline(y=3, color='red', linestyle=':', alpha=0.8, linewidth=2)
+    axes[1,1].axhline(y=-3, color='red', linestyle=':', alpha=0.8, linewidth=2)
+    axes[1,1].axhspan(-3, 3, alpha=0.1, color='gray')
+    axes[1,1].set_ylim(-3.2, 3.2)
+    axes[1,1].grid(True, alpha=0.3)
+    
+    # Adjust layout for clean appearance
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0.3, wspace=0.3)
+    
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white', 
+                   edgecolor='none', format='png')
+        print(f"✅ Clean trajectory plot saved: {save_path}")
     
     plt.close()
     return success_count
@@ -352,74 +660,177 @@ def main():
     # Load model
     model, tokenizer, lora_request = load_model_notebook_style(args.model_path)
     
-    # Generate test cases (random initial states)
-    print(f"\n🎲 Generating {args.num_cases} random test cases...")
-    np.random.seed(42)  # For reproducibility
-    test_cases = []
-    for i in range(args.num_cases):
-        x0 = np.random.uniform(-0.8, 0.8)
-        v0 = np.random.uniform(-0.8, 0.8)
-        test_cases.append((x0, v0))
-        print(f"   Case {i+1}: pos={x0:.4f}, vel={v0:.4f}")
+    # Use a fixed set of 10 test cases for consistent evaluation
+    print(f"\n🎲 Using a fixed set of 10 test cases for evaluation...")
+    test_cases = [
+        ( 0.7,  0.3),
+        (-0.5, -0.5),
+        ( 0.6, -0.2),
+        (-0.8,  0.4),
+        ( 0.4,  0.6),
+        (-0.3, -0.7),
+        ( 0.9,  0.1),
+        (-0.2,  0.8),
+        ( 0.1, -0.9),
+        (-0.6,  0.6),
+    ]
     
-    # Evaluate each case
+    # If num-cases is specified and different from 10, notify user
+    if args.num_cases != 10:
+        print(f"⚠️  Warning: --num-cases is set to {args.num_cases}, but we are using a fixed set of 10 cases.")
+    
+    for i, (x0, v0) in enumerate(test_cases):
+        print(f"   Case {i+1}: pos={x0:.4f}, vel={v0:.4f}")
+
+    # Evaluate each case with both standard and MPC approaches
     print(f"\n🚀 Running evaluation...")
     results = []
+    mpc_results = []
+    
     for i, (x0, v0) in enumerate(test_cases):
-        print(f"   Processing case {i+1}/{args.num_cases}: ({x0:.4f}, {v0:.4f})")
+        print(f"\n   📊 Case {i+1}/{args.num_cases}: ({x0:.4f}, {v0:.4f})")
+        
+        # Standard evaluation (full horizon)
+        print(f"      🔄 Standard evaluation...")
         result = evaluate_single_case(model, tokenizer, lora_request, x0, v0, args.dt, args.steps)
         results.append(result)
         
         if result["success"]:
-            print(f"      ✅ Success - Final error: {result['final_error']:.4f}")
+            print(f"      ✅ Standard - Final error: {result['final_error']:.4f}")
         else:
-            print(f"      ❌ Failed - {result['error']}")
+            print(f"      ❌ Standard failed - {result['error']}")
+        
+        # MPC evaluation (horizon=10)
+        print(f"      🎯 MPC evaluation...")
+        mpc_result = evaluate_single_case_mpc(model, tokenizer, lora_request, x0, v0, args.dt, args.steps, mpc_horizon=10)
+        mpc_results.append(mpc_result)
+        
+        if mpc_result["success"]:
+            print(f"      ✅ MPC - Final error: {mpc_result['final_error']:.4f}")
+        else:
+            print(f"      ❌ MPC failed - {mpc_result['error']}")
     
-    # Calculate statistics
+    # Ensure num_cases is correctly set for statistics
+    num_cases = len(test_cases)
+    
+    # Calculate statistics for both approaches
     successful_results = [r for r in results if r["success"]]
-    success_rate = len(successful_results) / len(results) * 100
+    successful_mpc_results = [r for r in mpc_results if r["success"]]
     
+    success_rate = len(successful_results) / num_cases * 100 if num_cases > 0 else 0
+    mpc_success_rate = len(successful_mpc_results) / num_cases * 100 if num_cases > 0 else 0
+    
+    print(f"\n📊 Evaluation Results Comparison:")
+    print(f"   📈 Standard Approach:")
     if successful_results:
         final_errors = [r["final_error"] for r in successful_results]
         mean_error = np.mean(final_errors)
-        print(f"\n📊 Results:")
-        print(f"   Success rate: {success_rate:.1f}% ({len(successful_results)}/{len(results)})")
-        print(f"   Mean final error: {mean_error:.4f}")
-        print(f"   Error range: {min(final_errors):.4f} - {max(final_errors):.4f}")
+        print(f"      Success rate: {success_rate:.1f}% ({len(successful_results)}/{num_cases})")
+        print(f"      Mean final error: {mean_error:.4f}")
+        print(f"      Error range: {min(final_errors):.4f} - {max(final_errors):.4f}")
+    else:
+        print(f"      Success rate: {success_rate:.1f}% ({len(successful_results)}/{num_cases})")
+    
+    print(f"   🎯 MPC Approach (Horizon=10):")
+    if successful_mpc_results:
+        mpc_final_errors = [r["final_error"] for r in successful_mpc_results]
+        mpc_mean_error = np.mean(mpc_final_errors)
+        print(f"      Success rate: {mpc_success_rate:.1f}% ({len(successful_mpc_results)}/{num_cases})")
+        print(f"      Mean final error: {mpc_mean_error:.4f}")
+        print(f"      Error range: {min(mpc_final_errors):.4f} - {max(mpc_final_errors):.4f}")
+    else:
+        print(f"      Success rate: {mpc_success_rate:.1f}% ({len(successful_mpc_results)}/{num_cases})")
+    
+    if successful_results and successful_mpc_results:
+        # Safe division for comparison
+        if mpc_mean_error > 0:
+            print(f"   📊 Performance Comparison:")
+            print(f"      Standard vs MPC error ratio: {mean_error/mpc_mean_error:.2f}")
+            if mpc_mean_error < mean_error:
+                print(f"      🎯 MPC performs better by {((mean_error-mpc_mean_error)/mean_error*100):.1f}%")
+            else:
+                print(f"      📈 Standard performs better by {((mpc_mean_error-mean_error)/mpc_mean_error*100):.1f}%")
+        else:
+            print(f"      📊 MPC Mean Error is zero, comparison not applicable.")
+    
+    # Plot trajectories for both approaches with standardized colors
+    if successful_results:
+        save_path = os.path.join(args.save_dir, "trajectories_standard.png")
+        plot_count = plot_trajectories_notebook_style(results, save_path, trajectory_color='#A23B72')
+        print(f"   📈 Plotted {plot_count} standard trajectories (RL - magenta)")
+    
+    if successful_mpc_results:
+        save_path_mpc = os.path.join(args.save_dir, "trajectories_mpc.png")
+        plot_count_mpc = plot_mpc_trajectories(mpc_results, save_path_mpc, trajectory_color='#2E86AB')
+        print(f"   🎯 Plotted {plot_count_mpc} MPC trajectories (optimal - blue)")
         
-        # Plot trajectories
-        save_path = os.path.join(args.save_dir, "trajectories_notebook_style.png")
-        plot_count = plot_trajectories_notebook_style(results, save_path)
-        print(f"   Plotted {plot_count} successful trajectories")
-        
-        # Save detailed results
-        results_path = os.path.join(args.save_dir, "evaluation_results.json")
-        os.makedirs(args.save_dir, exist_ok=True)
-        
-        # Convert numpy arrays to lists for JSON serialization
+    # Save detailed results for both approaches
+    results_path = os.path.join(args.save_dir, "evaluation_results.json")
+    mpc_results_path = os.path.join(args.save_dir, "evaluation_results_mpc.json")
+    os.makedirs(args.save_dir, exist_ok=True)
+    
+    # Convert numpy arrays to lists for JSON serialization
+    def convert_for_json(results_list):
         json_results = []
-        for r in results:
+        for r in results_list:
             json_result = r.copy()
-            for key in ["times", "positions", "velocities", "controls"]:
+            for key in ["times", "positions", "velocities", "controls", "mpc_trajectory", "mpc_controls"]:
                 if key in json_result and json_result[key] is not None:
-                    json_result[key] = [float(x) for x in json_result[key]]
+                    if isinstance(json_result[key], list):
+                        json_result[key] = [float(x) if isinstance(x, (int, float, np.number)) else x for x in json_result[key]]
+                    elif isinstance(json_result[key], (int, float, np.number)):
+                        json_result[key] = float(json_result[key])
+            
+            # Handle step_details for MPC results
+            if "step_details" in json_result and json_result["step_details"] is not None:
+                for detail in json_result["step_details"]:
+                    for detail_key in ["state_before", "planned_controls", "applied_control"]:
+                        if detail_key in detail and detail[detail_key] is not None:
+                            if isinstance(detail[detail_key], list):
+                                detail[detail_key] = [float(x) for x in detail[detail_key]]
+                            elif isinstance(detail[detail_key], (int, float, np.number)):
+                                detail[detail_key] = float(detail[detail_key])
+                                
             json_results.append(json_result)
-        
+        return json_results
+    
+    # Save standard evaluation results
+    json_results = convert_for_json(results)
+    
+    if successful_results:
         with open(results_path, 'w') as f:
             json.dump({
                 "summary": {
+                    "evaluation_type": "standard",
                     "success_rate": success_rate,
                     "mean_error": mean_error,
-                    "num_cases": len(results),
+                    "num_cases": num_cases,
                     "successful_cases": len(successful_results)
                 },
                 "results": json_results
             }, f, indent=2)
-        
-        print(f"   📄 Detailed results saved: {results_path}")
-        
+        print(f"   📄 Standard results saved: {results_path}")
+    
+    # Save MPC evaluation results
+    json_mpc_results = convert_for_json(mpc_results)
+    
+    if successful_mpc_results:
+        with open(mpc_results_path, 'w') as f:
+            json.dump({
+                "summary": {
+                    "evaluation_type": "mpc",
+                    "mpc_horizon": 10,
+                    "success_rate": mpc_success_rate,
+                    "mean_error": mpc_mean_error,
+                    "num_cases": num_cases,
+                    "successful_cases": len(successful_mpc_results)
+                },
+                "results": json_mpc_results
+            }, f, indent=2)
+        print(f"   📄 MPC results saved: {mpc_results_path}")
+    
     else:
-        print(f"\n❌ No successful results - all cases failed!")
+        print(f"\n❌ No successful results - evaluation failed!")
         
     print(f"\n🎉 Evaluation completed!")
 

@@ -3,26 +3,26 @@
 
 📊 Testing: SFT Model (Working)
 ----------------------------------------
-✅ Success rate: 60.0%
+✅ Success rate: 40.0%
 ✅ Mean performance: 0.000
-✅ Mean final error: 1.295
+✅ Mean final error: 1.103
 
 📊 Testing: GRPO Model (New)
 ----------------------------------------
-✅ Success rate: 60.0%
+✅ Success rate: 40.0%
 ✅ Mean performance: 0.000
-✅ Mean final error: 1.295
+✅ Mean final error: 1.103
 
 🏆 COMPARISON RESULTS
 ==================================================
 📊 Performance Comparison:
 Model                     Success Rate Performance  Final Error 
 -----------------------------------------------------------------
-SFT Model (Working)           60.0%       0.000       1.295
-GRPO Model (New)              60.0%       0.000       1.295
+SFT Model (Working)           40.0%       0.000       1.103
+GRPO Model (New)              40.0%       0.000       1.103
 
 🏆 Best Model: SFT Model (Working)
-   Success Rate: 60.0%
+   Success Rate: 40.0%
 
 📈 Analysis:
    GRPO vs SFT Success Rate: +0.0%

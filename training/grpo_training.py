@@ -1,4 +1,8 @@
-"""Fixed GRPO training implementation based on working notebook."""
+"""Fixed GRPO training implementation based on working notebook.
+
+Updated with LQR-aligned quadratic reward function that directly mirrors
+the optimal control cost function for better training consistency.
+"""
 
 import re
 import torch
@@ -262,9 +266,14 @@ def get_reward_functions_fixed(reasoning_end: str, solution_start: str, solution
             scores.append(score)
         return scores
     
-    def evaluate_control_sequence(prompts, completions, answer, **kwargs):
-        """Enhanced evaluation of control sequences - match working notebook."""
+    def evaluate_control_sequence_lqr_aligned(prompts, completions, answer, **kwargs):
+        """LQR-aligned quadratic reward function matching optimal control cost."""
         scores = []
+        
+        # LQR cost parameters (matching lqr_solver.py)
+        Q = np.array([[10.0, 0.0], [0.0, 10.0]])  # State cost matrix
+        R = 0.1  # Control cost scalar
+        Q_terminal = Q * 5.0  # Terminal cost multiplier for final state bonus
         
         # Use system-specific parameters if available
         if system_type == "double_integrator":
@@ -279,13 +288,13 @@ def get_reward_functions_fixed(reasoning_end: str, solution_start: str, solution
             steps = 50
         
         for completion, true_answer in zip(completions, answer):
-            score = 0
+            score = 0.0
             response = completion[0]["content"]
             
             # Extract control sequence
             control_match = re.search(rf"{solution_start}(.*?){solution_end}", response, re.DOTALL)
             if control_match is None:
-                scores.append(-2.0)
+                scores.append(-10.0)  # Large penalty for format failure
                 continue
                 
             try:
@@ -293,70 +302,104 @@ def get_reward_functions_fixed(reasoning_end: str, solution_start: str, solution
                 control_text = control_match.group(1).strip()
                 control_values = [float(x.strip()) for x in control_text.split(',')]
                 
-                # Check constraints
-                if len(control_values) == steps:
-                    score += 1.0
-                else:
-                    score -= 1.0
-                    
-                if all(-3 <= u <= 3 for u in control_values):
-                    score += 1.0
-                else:
-                    score -= 2.0
+                # Basic format check
+                if len(control_values) != steps:
+                    scores.append(-5.0)
+                    continue
                 
-                # Check for LQR smoothness
-                if len(control_values) > 1:
-                    diffs = [abs(control_values[i] - control_values[i-1]) for i in range(1, len(control_values))]
-                    if max(diffs) < 1.5:  # Smooth control changes
-                        score += 1.5
-                
-                # Simulate system
+                # Extract initial state
                 problem_text = prompts[0][-1]["content"]
                 initial_match = re.search(r"position=([-\d\.]+), velocity=([-\d\.]+)", problem_text)
-                if initial_match:
-                    x0 = float(initial_match.group(1))
-                    v0 = float(initial_match.group(2))
+                if not initial_match:
+                    scores.append(-5.0)
+                    continue
                     
-                    # Simulate system with generated controls
-                    x, v = x0, v0
-                    valid_trajectory = True
+                x0 = float(initial_match.group(1))
+                v0 = float(initial_match.group(2))
+                
+                # Simulate trajectory and compute LQR-style cost
+                states = [(x0, v0)]  # Store as tuples for easier handling
+                x, v = x0, v0
+                valid_trajectory = True
+                constraint_violations = 0
+                
+                # Simulate system with generated controls
+                for u in control_values:
+                    # Apply control bounds check
+                    if not (-3.0 <= u <= 3.0):
+                        constraint_violations += 1
+                        u = max(-3.0, min(3.0, u))  # Clamp control
                     
-                    for u in control_values:
-                        v = v + u * dt
-                        x = x + v * dt
-                        
-                        if not (-1 <= x <= 1 and -1 <= v <= 1):
-                            valid_trajectory = False
-                            break
+                    # Update state
+                    v = v + u * dt
+                    x = x + v * dt
                     
-                    # Reward valid trajectory
-                    if valid_trajectory:
-                        score += 1.0
-                    else:
-                        score -= 1.0
+                    # Check state bounds
+                    if not (-1.0 <= x <= 1.0 and -1.0 <= v <= 1.0):
+                        constraint_violations += 1
+                        valid_trajectory = False
+                        # Clamp states for continued simulation
+                        x = max(-1.0, min(1.0, x))
+                        v = max(-1.0, min(1.0, v))
                     
-                    # Reward based on final error
-                    final_error = np.sqrt(x**2 + v**2)
-                    if final_error < 0.1:
-                        score += 3.0
-                    elif final_error < 0.2:
-                        score += 2.0
-                    elif final_error < 0.5:
-                        score += 1.0
-                    else:
-                        score -= 1.0
+                    states.append((x, v))
+                
+                # Compute LQR-style quadratic cost (converted to reward)
+                total_cost = 0.0
+                
+                # State costs for all intermediate states
+                for i, (pos, vel) in enumerate(states[:-1]):
+                    state_vec = np.array([pos, vel])
+                    state_cost = state_vec.T @ Q @ state_vec
+                    total_cost += state_cost
+                
+                # Control costs
+                for u in control_values:
+                    control_cost = R * u**2
+                    total_cost += control_cost
+                
+                # Terminal state cost (final state)
+                final_pos, final_vel = states[-1]
+                final_state = np.array([final_pos, final_vel])
+                terminal_cost = final_state.T @ Q_terminal @ final_state
+                total_cost += terminal_cost
+                
+                # Convert cost to reward (negative cost = positive reward)
+                # Scale down the cost to reasonable reward range
+                lqr_reward = -total_cost / 100.0  # Scale factor to normalize
+                
+                # Terminal bonus for reaching near origin
+                final_error = np.sqrt(final_pos**2 + final_vel**2)
+                terminal_bonus = 0.0
+                if final_error < 0.05:
+                    terminal_bonus = 10.0  # Large bonus for excellent performance
+                elif final_error < 0.1:
+                    terminal_bonus = 5.0   # Good performance
+                elif final_error < 0.2:
+                    terminal_bonus = 2.0   # Decent performance
+                elif final_error < 0.5:
+                    terminal_bonus = 0.5   # Acceptable performance
+                
+                # Constraint violation penalties
+                constraint_penalty = -constraint_violations * 2.0
+                
+                # Trajectory validity bonus
+                validity_bonus = 3.0 if valid_trajectory else -5.0
+                
+                # Combine all reward components
+                score = lqr_reward + terminal_bonus + constraint_penalty + validity_bonus
                 
                 scores.append(score)
                 
             except Exception as e:
-                scores.append(-2.0)
+                scores.append(-10.0)  # Large penalty for parsing errors
                 
         return scores
     
     return [
         match_format_exactly,
         match_format_approximately,
-        evaluate_control_sequence,
+        evaluate_control_sequence_lqr_aligned,
     ]
 
 

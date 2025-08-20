@@ -18,8 +18,16 @@ from core.data_pipeline import UniversalDataGenerator
 
 def main():
     import json
+    import argparse
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Train GRPO model with working notebook parameters")
+    parser.add_argument("--max-steps", type=int, default=200, help="Maximum number of training steps (default: 200)")
+    args = parser.parse_args()
+    
     print("🚀 GRPO TRAINING WITH WORKING NOTEBOOK PARAMETERS")
     print("=" * 60)
+    print(f"📊 Max training steps: {args.max_steps}")
     
     # Set seeds for reproducibility
     torch.manual_seed(3407)
@@ -161,7 +169,7 @@ Then provide exactly {current_steps} control values as a comma-separated list be
             per_device_train_batch_size=4,  # EXACT from notebook
             gradient_accumulation_steps=1,  # EXACT from notebook
             warmup_steps=5,                 # EXACT from notebook
-            num_train_epochs=2,             # EXACT from notebook
+            num_train_epochs=1,             # EXACT from notebook
             learning_rate=2e-4,             # EXACT from notebook
             logging_steps=5,                # EXACT from notebook
             optim="adamw_8bit",             # EXACT from notebook
@@ -234,7 +242,7 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         gradient_accumulation_steps=1,
         num_generations=4,
         max_completion_length=max_completion_length,
-        max_steps=100,
+        max_steps=args.max_steps,
         save_steps=500,
         report_to="none",  # Disable wandb for now
         output_dir="./grpo_working_output",
