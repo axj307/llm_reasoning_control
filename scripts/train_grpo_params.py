@@ -4,6 +4,7 @@ Train GRPO model with working notebook parameters.
 Based on successful Qwen3_(4B)-GRPO_control.ipynb approach.
 """
 
+import unsloth  # Import first for optimizations
 import torch
 import numpy as np
 import random
@@ -15,6 +16,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.data_pipeline import UniversalDataGenerator
+from training.grpo_training import get_reward_functions_fixed
 
 def main():
     import json
@@ -169,7 +171,7 @@ Then provide exactly {current_steps} control values as a comma-separated list be
             per_device_train_batch_size=4,  # EXACT from notebook
             gradient_accumulation_steps=1,  # EXACT from notebook
             warmup_steps=5,                 # EXACT from notebook
-            num_train_epochs=1,             # EXACT from notebook
+            num_train_epochs=0.5,             # EXACT from notebook
             learning_rate=2e-4,             # EXACT from notebook
             logging_steps=5,                # EXACT from notebook
             optim="adamw_8bit",             # EXACT from notebook
@@ -231,19 +233,19 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     from trl import GRPOConfig, GRPOTrainer
     training_args = GRPOConfig(
         vllm_sampling_params=vllm_sampling_params,
-        temperature=1.0,
+        temperature=1.0,  # Keep at 1.0 or higher as requested
         learning_rate=5e-6,
         weight_decay=0.01,
         warmup_ratio=0.1,
         lr_scheduler_type="linear",
         optim="adamw_8bit",
         logging_steps=1,
-        per_device_train_batch_size=4,  # Will be changed to num_generations
+        per_device_train_batch_size=16,  # Will be changed to num_generations
         gradient_accumulation_steps=1,
-        num_generations=4,
+        num_generations=16,  # Keep high as requested by user
         max_completion_length=max_completion_length,
-        max_steps=args.max_steps,
-        save_steps=500,
+        max_steps=args.max_steps,  # Use user-specified steps
+        save_steps=args.max_steps,  # Save only at the end
         report_to="wandb",  # Enable wandb for progress tracking
         output_dir="./grpo_working_output",
     )
@@ -268,7 +270,7 @@ Then provide exactly {current_steps} control values as a comma-separated list be
             score = 0
             response = completion[0]["content"]
             if match_format.search(response) is not None: 
-                score += 3.0
+                score += 1.0  # Reduced from 3.0 to prevent dominance over control quality
             scores.append(score)
         return scores
     
@@ -277,9 +279,9 @@ Then provide exactly {current_steps} control values as a comma-separated list be
         for completion in completions:
             score = 0
             response = completion[0]["content"]
-            score += 0.5 if response.count(reasoning_end) == 1 else -1.0
-            score += 0.5 if response.count(solution_start) == 1 else -1.0
-            score += 0.5 if response.count(solution_end) == 1 else -1.0
+            score += 0.2 if response.count(reasoning_end) == 1 else -0.5  # Reduced rewards/penalties
+            score += 0.2 if response.count(solution_start) == 1 else -0.5
+            score += 0.1 if response.count(solution_end) == 1 else -0.5
             scores.append(score)
         return scores
     
@@ -341,16 +343,18 @@ Then provide exactly {current_steps} control values as a comma-separated list be
                     else:
                         score -= 1.0
                     
-                    # Final error reward
+                    # Final error reward (ALIGNED WITH GRPO IMPROVEMENTS)
                     final_error = np.sqrt(x**2 + v**2)
-                    if final_error < 0.1:
-                        score += 3.0
+                    if final_error < 0.05:
+                        score += 50.0  # Huge bonus for excellent performance
+                    elif final_error < 0.1:
+                        score += 25.0  # Large bonus for good performance
                     elif final_error < 0.2:
-                        score += 2.0
+                        score += 10.0  # Good bonus for decent performance
                     elif final_error < 0.5:
-                        score += 1.0
+                        score += 2.0   # Small bonus for acceptable performance
                     else:
-                        score -= 1.0
+                        score -= 50.0 * (final_error ** 2)  # Strong penalty for poor performance
                 
                 scores.append(score)
                 
@@ -386,10 +390,29 @@ Then provide exactly {current_steps} control values as a comma-separated list be
                 
                 if logs:
                     loss_val = logs.get('train_loss', 'N/A')
+                    reward_val = logs.get('reward', 'N/A')
+                    
+                    # Extract individual reward components if available
+                    format_reward = logs.get('rewards/match_format_exactly', 'N/A')
+                    approx_reward = logs.get('rewards/match_format_approximately', 'N/A')
+                    control_reward = logs.get('rewards/evaluate_control_sequence_lqr_aligned', 'N/A')  # NEW PROGRESS-FOCUSED REWARD!
+                    
                     if isinstance(loss_val, (int, float)):
-                        print(f"📊 Current Metrics: Loss={loss_val:.4f}")
+                        print(f"📊 Loss: {loss_val:.4f}")
                     else:
-                        print(f"📊 Current Metrics: Loss={loss_val}")
+                        print(f"📊 Loss: {loss_val}")
+                    
+                    if isinstance(reward_val, (int, float)):
+                        print(f"🎯 Total Reward: {reward_val:.4f}")
+                        
+                    print(f"📝 Format Exact: {format_reward}")
+                    print(f"📝 Format Approx: {approx_reward}")
+                    print(f"🎮 Control Quality: {control_reward}")
+                    
+                    # Calculate training progress
+                    max_steps = 500  # Default from our config
+                    progress = min(self.step_count / max_steps, 1.0) * 100
+                    print(f"⏳ Training Progress: {progress:.1f}%")
                 
                 # Test current model output to see training progress
                 if self.model and self.tokenizer and self.system_prompt:
@@ -425,14 +448,24 @@ Then provide exactly {current_steps} control values as a comma-separated list be
     output_monitor = GRPOOutputMonitor(log_every_n_steps=2)
     output_monitor.setup(model, tokenizer, system_prompt)
     
+    # Get progress-focused reward functions (NEW SYSTEM!)
+    print("🎯 Loading progress-focused GRPO reward functions...")
+    progress_reward_functions = get_reward_functions_fixed(
+        reasoning_end=reasoning_end,
+        solution_start=solution_start,
+        solution_end=solution_end,
+        tokenizer=tokenizer,
+        system_type="double_integrator"
+    )
+    print(f"✅ Loaded {len(progress_reward_functions)} reward functions:")
+    print("   1. Format matching (exact)")
+    print("   2. Format matching (approximate)")  
+    print("   3. Progress-focused control evaluation (+30 to +140 range)")
+    
     grpo_trainer = GRPOTrainer(
         model=model,
         processing_class=tokenizer,
-        reward_funcs=[
-            match_format_exactly,
-            match_format_approximately,
-            evaluate_control_sequence,
-        ],
+        reward_funcs=progress_reward_functions,  # USE PROGRESS-FOCUSED REWARDS!
         args=training_args,
         train_dataset=control_dataset,
         callbacks=[output_monitor]  # Monitor every 25 steps

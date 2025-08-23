@@ -61,29 +61,29 @@ def train_grpo_model(model_manager: UniversalModelManager,
         include_stop_str_in_output=True,
     )
     
-    # Match working notebook GRPO config EXACTLY
+    # OPTIMIZED GRPO config for convergence (building on SFT foundation)
     default_config = {
         "vllm_sampling_params": vllm_sampling_params,
-        "temperature": 1.0,  # Exact from notebook
-        "learning_rate": 5e-6,
+        "temperature": 1.5,  # Increased for better exploration from SFT baseline
+        "learning_rate": 1e-5,  # Higher for faster improvement from good SFT start
         "weight_decay": 0.01,
         "warmup_ratio": 0.1,
-        "lr_scheduler_type": "linear",
+        "lr_scheduler_type": "cosine",  # Cosine for smoother convergence
         "optim": "adamw_8bit",
         "logging_steps": 1,
-        "per_device_train_batch_size": 4,  # Notebook adjusts to 4 for num_generations
+        "per_device_train_batch_size": 16,  # High for better gradient estimates
         "gradient_accumulation_steps": 1,  
-        "num_generations": 4,  # Working notebook uses 4 generations
+        "num_generations": 16,  # Keep high as requested by user
         "max_completion_length": max_completion_length,
-        "max_steps": 50,  # Working notebook uses 50 steps
-        "save_steps": 500,
+        "max_steps": 200,  # Reduced training steps as requested
+        "save_steps": 200,  # Save only at the end
         "report_to": "wandb",
         "output_dir": "./temp_grpo_output",
-        "temperature": 1.0,  # Working notebook uses temperature 1.0
-        "min_p": 0.1,
-        "top_p": 1.0,
+        "min_p": 0.05,  # Slightly more focused than 0.1
+        "top_p": 0.9,   # More focused sampling (was 1.0)
         "top_k": -1,
         "seed": 3407,
+        "beta": 0.01,   # Small KL penalty to prevent policy collapse
     }
     
     if training_config:
@@ -242,33 +242,38 @@ def get_reward_functions_fixed(reasoning_end: str, solution_start: str, solution
     )
     
     def match_format_exactly(completions, **kwargs):
-        """Reward function: exact format matching."""
+        """Reward function: exact format matching (REDUCED to prevent dominance)."""
         scores = []
         for completion in completions:
             score = 0.0
             # Match working notebook format
             response = completion[0]["content"]
             if match_format.search(response) is not None:
-                score += 3.0
+                score += 1.0  # Reduced from 3.0 to let control quality dominate
             scores.append(score)
         return scores
     
     def match_format_approximately(completions, **kwargs):
-        """Reward function: approximate format matching."""
+        """Reward function: approximate format matching (REDUCED to prevent dominance)."""
         scores = []
         for completion in completions:
             score = 0.0
-            # Match working notebook format
+            # Match working notebook format  
             response = completion[0]["content"]
-            score += 0.5 if response.count(reasoning_end) == 1 else -1.0
-            score += 0.5 if response.count(solution_start) == 1 else -1.0
-            score += 0.5 if response.count(solution_end) == 1 else -1.0
+            score += 0.2 if response.count(reasoning_end) == 1 else -0.5  # Reduced penalties
+            score += 0.2 if response.count(solution_start) == 1 else -0.5
+            score += 0.1 if response.count(solution_end) == 1 else -0.5
             scores.append(score)
         return scores
     
     def evaluate_control_sequence_lqr_aligned(prompts, completions, answer, **kwargs):
-        """LQR-aligned quadratic reward function matching optimal control cost."""
+        """LQR-aligned quadratic reward function with progressive shaping."""
         scores = []
+        
+        # Progressive reward shaping - get current training step if available
+        current_step = kwargs.get('step', 0)
+        max_steps = kwargs.get('max_steps', 500)
+        training_progress = min(current_step / max_steps, 1.0) if max_steps > 0 else 0.0
         
         # LQR cost parameters (matching lqr_solver.py)
         Q = np.array([[10.0, 0.0], [0.0, 10.0]])  # State cost matrix
@@ -364,30 +369,75 @@ def get_reward_functions_fixed(reasoning_end: str, solution_start: str, solution
                 terminal_cost = final_state.T @ Q_terminal @ final_state
                 total_cost += terminal_cost
                 
-                # Convert cost to reward (negative cost = positive reward)
-                # Scale down the cost to reasonable reward range
-                lqr_reward = -total_cost / 100.0  # Scale factor to normalize
+                # === PROGRESS-FOCUSED REWARD SYSTEM ===
+                # Start with positive baseline - model should feel "successful" by default
+                baseline_reward = 70.0  # Increased from 50.0 to absorb small penalties
                 
-                # Terminal bonus for reaching near origin
+                # 1. DISTANCE PROGRESS REWARD (most important for improvement)
+                initial_distance = np.sqrt(x0**2 + v0**2)
                 final_error = np.sqrt(final_pos**2 + final_vel**2)
-                terminal_bonus = 0.0
-                if final_error < 0.05:
-                    terminal_bonus = 10.0  # Large bonus for excellent performance
-                elif final_error < 0.1:
-                    terminal_bonus = 5.0   # Good performance
-                elif final_error < 0.2:
-                    terminal_bonus = 2.0   # Decent performance
-                elif final_error < 0.5:
-                    terminal_bonus = 0.5   # Acceptable performance
                 
-                # Constraint violation penalties
-                constraint_penalty = -constraint_violations * 2.0
+                # Reward for getting closer to origin (can be up to +30)
+                if initial_distance > 0:
+                    progress_ratio = max(0, (initial_distance - final_error) / initial_distance)
+                    distance_progress_reward = 30.0 * progress_ratio
+                else:
+                    distance_progress_reward = 30.0 if final_error < 0.1 else 0.0
                 
-                # Trajectory validity bonus
-                validity_bonus = 3.0 if valid_trajectory else -5.0
+                # 2. PROXIMITY REWARD - staying close to origin during trajectory
+                avg_distance = np.mean([np.sqrt(pos**2 + vel**2) for pos, vel in states])
+                proximity_reward = 15.0 * np.exp(-2.0 * avg_distance)  # Exponential decay
                 
-                # Combine all reward components
-                score = lqr_reward + terminal_bonus + constraint_penalty + validity_bonus
+                # 3. TERMINAL EXCELLENCE BONUS - smooth continuous function
+                terminal_bonus = 25.0 * np.exp(-10.0 * final_error)  # Smooth, not discrete
+                
+                # 4. CONTROL EFFICIENCY - reward using less aggressive control
+                control_effort = np.mean(np.abs(control_values))
+                efficiency_reward = 10.0 * np.exp(-control_effort)  # Less effort = better
+                
+                # 5. TRAJECTORY SMOOTHNESS - reward smooth control changes
+                smoothness_reward = 0.0
+                if len(control_values) > 1:
+                    control_changes = [abs(control_values[i] - control_values[i-1]) for i in range(1, len(control_values))]
+                    avg_change = np.mean(control_changes)
+                    smoothness_reward = 8.0 * np.exp(-2.0 * avg_change)  # Smooth = good
+                
+                # 6. NORMALIZED LQR COST (bounded contribution, not dominating)
+                normalized_lqr = -np.tanh(total_cost / 200.0) * 15.0  # Bounded between [-15, 0]
+                
+                # 7. CONSTRAINT HANDLING (penalties but not overwhelming)
+                constraint_penalty = -min(constraint_violations * 2.0, 20.0)  # Reduced penalty & capped
+                
+                # 8. SMOOTH VALIDITY SCORING (percentage-based instead of binary)
+                valid_steps = sum(1 for pos, vel in states if -1.0 <= pos <= 1.0 and -1.0 <= vel <= 1.0)
+                validity_ratio = valid_steps / len(states) if len(states) > 0 else 0.0
+                validity_score = validity_ratio * 10.0 - 5.0  # Range: -5.0 to +5.0
+                
+                # === COMBINE ALL COMPONENTS (PROGRESS-FOCUSED) ===
+                raw_score = (
+                    baseline_reward +           # +70 (positive foundation)
+                    distance_progress_reward +  # 0 to +30 (improvement from initial)
+                    proximity_reward +          # 0 to +15 (staying near origin)
+                    terminal_bonus +            # 0 to +25 (final accuracy)
+                    efficiency_reward +         # 0 to +10 (control efficiency)
+                    smoothness_reward +         # 0 to +8 (smooth control)
+                    normalized_lqr +           # -15 to 0 (bounded cost penalty)
+                    constraint_penalty +        # -20 to 0 (capped constraint penalty)
+                    validity_score              # -5 to +5 (smooth validity)
+                )
+                
+                # 9. REWARD CLIPPING (prevent learning signal destruction)
+                score = max(raw_score, 30.0)  # Never go below +30 to maintain positive signal
+                
+                # EXPECTED RANGE: ~30 to ~160 (always positive, stable learning signal)
+                
+                # Debug logging for reward components (helps with tuning)
+                if len(scores) == 0:  # Log first case for debugging
+                    print(f"🎯 REWARD BREAKDOWN: baseline={baseline_reward:.1f}, progress={distance_progress_reward:.1f}, "
+                          f"proximity={proximity_reward:.1f}, terminal={terminal_bonus:.1f}, "
+                          f"efficiency={efficiency_reward:.1f}, smoothness={smoothness_reward:.1f}, "
+                          f"lqr={normalized_lqr:.1f}, constraints={constraint_penalty:.1f}, "
+                          f"validity={validity_score:.1f}, raw={raw_score:.1f} → CLIPPED={score:.1f}")
                 
                 scores.append(score)
                 

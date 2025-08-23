@@ -113,6 +113,9 @@ The framework follows a modular design with clear separation of concerns:
 
 The framework is designed for research in LLM-based control, with emphasis on interpretability, extensibility, and fair comparison between specialist and universal models.
 
+### Key Insight
+GRPO requires stable positive rewards to learn effectively. Massive constraint penalties destroy the learning signal, so capping penalties while maintaining enough discouragement for violations is critical for convergence.
+
 ## File Organization Guidelines
 
 ### Generated Files

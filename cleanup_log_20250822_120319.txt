@@ -1,0 +1,27 @@
+[12:03:19] ============================================================
+[12:03:19] 🧹 WORKSPACE CLEANUP STARTING
+[12:03:19] ============================================================
+[12:03:19] 🔍 Scanning for cleanup targets...
+[12:03:19] 📊 Found 12 items totaling 1.2 GB
+[12:03:19] 
+🗑️  Performing cleanup...
+[12:03:19] Removed directory: grpo_working_output/
+[12:03:19] Removed directory: sft_pretraining_output/
+[12:03:20] Removed directory: figures/job_3165229/
+[12:03:20] Removed directory: figures/job_3222453/
+[12:03:20] Removed directory: figures/job_3220792/
+[12:03:20] Removed directory: unsloth_compiled_cache/
+[12:03:20] Removed directory: temp_comparison_SFT Model (Working)/
+[12:03:20] Removed directory: temp_comparison_GRPO Model (New)/
+[12:03:20] Failed to remove unsloth_compiled_cache/__pycache__/: [Errno 2] No such file or directory: 'unsloth_compiled_cache/__pycache__/'
+[12:03:20] Removed directory: __pycache__/
+[12:03:20] Removed directory: grpo_trainer_lora_model/
+[12:03:20] Removed directory: figures/job_3232635/
+[12:03:20] ============================================================
+[12:03:20] 🎉 CLEANUP COMPLETED
+[12:03:20] ============================================================
+[12:03:20] ✅ Successfully removed: 11/12 items
+[12:03:20] 💾 Space  freed: 1.2 GB
+[12:03:20] ⚠️  Failed to remove: 1 items
+[12:03:20] ⏱️  Cleanup completed in 0.2 seconds
+[12:03:20] 📄 Detailed log saved to: cleanup_log_20250822_120319.txt

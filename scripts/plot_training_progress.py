@@ -252,7 +252,9 @@ def parse_console_logs(log_file: str) -> Dict:
         'eval_loss': [],
         'learning_rate': [],
         'grad_norm': [],
-        'train_reward': []
+        'train_reward': [],
+        'kl_divergence': [],  # Added for GRPO
+        'policy_loss': []     # Added for GRPO
     }
     
     try:
@@ -295,6 +297,19 @@ def parse_console_logs(log_file: str) -> Dict:
                         metrics['train_reward'].append(float(reward_match.group(1)))
                     else:
                         metrics['train_reward'].append(None)
+                    
+                    # Look for 'kl': value (GRPO KL divergence)
+                    kl_match = re.search(r"'kl':\s*([\d\.e-]+)", line)
+                    if kl_match:
+                        metrics['kl_divergence'].append(float(kl_match.group(1)))
+                    else:
+                        metrics['kl_divergence'].append(None)
+                    
+                    # For GRPO, policy loss is typically the main loss
+                    if loss_match:
+                        metrics['policy_loss'].append(float(loss_match.group(1)))
+                    else:
+                        metrics['policy_loss'].append(None)
                         
                     # Look for 'epoch': value
                     epoch_match = re.search(r"'epoch':\s*([\d\.e-]+)", line)

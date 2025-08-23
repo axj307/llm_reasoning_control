@@ -828,13 +828,22 @@ def main():
     parser.add_argument("--dt", type=float, default=0.1, help="Time step")
     parser.add_argument("--steps", type=int, default=50, help="Number of steps")
     parser.add_argument("--mpc-horizon", type=int, default=10, help="MPC planning horizon")
+    parser.add_argument("--skip-mpc", action="store_true", help="Skip MPC evaluation for faster testing")
     
     args = parser.parse_args()
     
     print(f"🧪 Notebook-Style Evaluation")
     print(f"📁 Model: {args.model_path}")
     print(f"🎯 Test cases: {args.num_cases}")
-    print(f"⏱️  Time step: {args.dt}, Steps: {args.steps}, MPC Horizon: {args.mpc_horizon}")
+    print(f"⏱️  Time step: {args.dt}, Steps: {args.steps}")
+    
+    # Debug MPC settings
+    if args.skip_mpc:
+        print(f"⏩ MPC Evaluation: SKIPPED (--skip-mpc flag enabled)")
+        print(f"💪 Focusing on one-shot trajectory generation for faster evaluation")
+    else:
+        print(f"🎯 MPC Evaluation: ENABLED (Horizon: {args.mpc_horizon})")
+        print(f"⚠️  This will be 50x slower - use --skip-mcp to disable")
     
     # Load model
     model, tokenizer, lora_request = load_model_notebook_style(args.model_path)
@@ -884,22 +893,28 @@ def main():
         else:
             print(f"      ❌ Standard failed - {result['error']}")
         
-        # MPC evaluation with configurable horizon
-        print(f"      🎯 MPC evaluation (horizon={args.mpc_horizon})...")
-        mpc_result = evaluate_single_case_mpc(model, tokenizer, lora_request, x0, v0, args.dt, args.steps, mpc_horizon=args.mpc_horizon)
-        mpc_results.append(mpc_result)
-        
-        if mpc_result["success"]:
-            print(f"      ✅ MPC - Final error: {mpc_result['final_error']:.4f}")
+        # MPC evaluation with configurable horizon (skip if --skip-mpc flag is used)
+        if not args.skip_mpc:
+            print(f"      🎯 MPC evaluation (horizon={args.mpc_horizon})...")
+            mpc_result = evaluate_single_case_mpc(model, tokenizer, lora_request, x0, v0, args.dt, args.steps, mpc_horizon=args.mpc_horizon)
+            mpc_results.append(mpc_result)
+            
+            if mpc_result["success"]:
+                print(f"      ✅ MPC - Final error: {mpc_result['final_error']:.4f}")
+            else:
+                print(f"      ❌ MPC failed - {mpc_result['error']}")
         else:
-            print(f"      ❌ MPC failed - {mpc_result['error']}")
+            print(f"      ⏩ Skipping MPC evaluation (--skip-mpc flag enabled)")
+            mpc_result = {"success": False, "skipped": True, "error": "MPC evaluation skipped"}
+            mpc_results.append(mpc_result)
     
     # Ensure num_cases is correctly set for statistics
     num_cases = len(test_cases)
     
     # Calculate statistics for both approaches
     successful_results = [r for r in results if r["success"]]
-    successful_mpc_results = [r for r in mpc_results if r["success"]]
+    # Only count successful MPC results if MPC was actually run (not skipped)
+    successful_mpc_results = [r for r in mpc_results if r["success"] and not r.get("skipped", False)]
     
     success_rate = len(successful_results) / num_cases * 100 if num_cases > 0 else 0
     mpc_success_rate = len(successful_mpc_results) / num_cases * 100 if num_cases > 0 else 0
@@ -915,15 +930,21 @@ def main():
     else:
         print(f"      Success rate: {success_rate:.1f}% ({len(successful_results)}/{num_cases})")
     
-    print(f"   🎯 MPC Approach (Horizon={args.mpc_horizon}):")
-    if successful_mpc_results:
-        mpc_final_errors = [r["final_error"] for r in successful_mpc_results]
-        mpc_mean_error = np.mean(mpc_final_errors)
-        print(f"      Success rate: {mpc_success_rate:.1f}% ({len(successful_mpc_results)}/{num_cases})")
-        print(f"      Mean final error: {mpc_mean_error:.4f}")
-        print(f"      Error range: {min(mpc_final_errors):.4f} - {max(mpc_final_errors):.4f}")
+    # MPC results summary (check if MPC was actually run)
+    mpc_skipped = any(r.get("skipped", False) for r in mpc_results)
+    if not mpc_skipped:
+        print(f"   🎯 MPC Approach (Horizon={args.mpc_horizon}):")
+        if successful_mpc_results:
+            mpc_final_errors = [r["final_error"] for r in successful_mpc_results]
+            mpc_mean_error = np.mean(mpc_final_errors)
+            print(f"      Success rate: {mpc_success_rate:.1f}% ({len(successful_mpc_results)}/{num_cases})")
+            print(f"      Mean final error: {mpc_mean_error:.4f}")
+            print(f"      Error range: {min(mpc_final_errors):.4f} - {max(mpc_final_errors):.4f}")
+        else:
+            print(f"      Success rate: {mpc_success_rate:.1f}% ({len(successful_mpc_results)}/{num_cases})")
     else:
-        print(f"      Success rate: {mpc_success_rate:.1f}% ({len(successful_mpc_results)}/{num_cases})")
+        print(f"   ⏩ MPC Approach: Skipped (--skip-mpc flag enabled)")
+        print(f"      To enable MPC evaluation, remove --skip-mpc flag from command")
     
     if successful_results and successful_mpc_results:
         # Safe division for comparison
