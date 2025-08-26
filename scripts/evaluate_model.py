@@ -969,11 +969,13 @@ def main():
         plot_count_mpc = plot_mpc_trajectories(mpc_results, save_path_mpc, trajectory_color='#2E86AB')
         print(f"   🎯 Plotted {plot_count_mpc} MPC trajectories (optimal - blue)")
     
-    # Generate optimal vs GRPO comparison plot
+    # Generate optimal vs model comparison plot
     if successful_results and optimal_results:
-        save_path_comparison = os.path.join(args.save_dir, "trajectories_optimal_vs_grpo.png")
+        # Determine model type from path
+        model_type = "grpo" if "grpo" in args.model_path.lower() else "sft"
+        save_path_comparison = os.path.join(args.save_dir, f"trajectories_optimal_vs_{model_type}.png")
         plot_count_comparison = plot_optimal_vs_grpo_comparison(results, optimal_results, save_path_comparison)
-        print(f"   📊 Plotted comparison: {plot_count_comparison} GRPO vs {len(optimal_results)} optimal trajectories")
+        print(f"   📊 Plotted comparison: {plot_count_comparison} {model_type.upper()} vs {len(optimal_results)} optimal trajectories")
         
         # Calculate comparison statistics
         optimal_errors = [r["final_error"] for r in optimal_results]
@@ -1081,9 +1083,11 @@ def main():
         print(f"\n🎉 Evaluation completed!")
         print(f"📁 Results saved in: {args.save_dir}")
         print(f"📊 Generated plots:")
-        print(f"   - trajectories_standard.png (GRPO trajectories)")
+        # Determine model type for print statement
+        model_type = "grpo" if "grpo" in args.model_path.lower() else "sft"
+        print(f"   - trajectories_standard.png ({model_type.upper()} trajectories)")
         print(f"   - trajectories_mpc.png (MPC trajectories)")
-        print(f"   - trajectories_optimal_vs_grpo.png (Comparison plot)")
+        print(f"   - trajectories_optimal_vs_{model_type}.png (Comparison plot)")
         
     print(f"\n🎉 All evaluations completed!")
 

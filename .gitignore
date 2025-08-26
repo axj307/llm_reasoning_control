@@ -62,6 +62,8 @@ plots/temp/
 plots/experiments/
 figures/temp/
 figures/experiments/
+figures/job_*/
+figures/
 
 # Keep final results by creating a results/ directory
 # and storing important plots there
